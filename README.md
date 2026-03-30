@@ -1,0 +1,1 @@
+A pet that you can interact with in VS Code
