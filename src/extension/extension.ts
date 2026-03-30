@@ -688,9 +688,13 @@ function getHtmlForWebview(webview: vscode.Webview, extensionUri: vscode.Uri): s
     <div id="foreground"></div>
     <div id="background"></div>
 
-    <!-- Inventory panel (bottom) -->
+    <!-- Inventory panel (bottom, collapsible) -->
     <div id="inventoryPanel">
-        <div id="inventoryTitle">Inventory</div>
+        <div id="inventoryHeader">
+            <span id="inventoryToggle">🎒</span>
+            <span id="inventoryTitle">Inventory</span>
+            <span id="inventoryChevron">▲</span>
+        </div>
         <div id="inventoryItems"><span class="inv-empty">Save files to earn food!</span></div>
     </div>
 

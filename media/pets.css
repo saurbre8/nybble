@@ -227,11 +227,36 @@ body {
 #inventoryPanel {
     position: fixed;
     bottom: 0; left: 0; right: 0;
-    padding: 6px 10px 8px;
+    padding: 0;
     background: var(--nybble-bg);
     border-top: 1px solid var(--nybble-border);
     backdrop-filter: blur(6px);
     z-index: 20;
+    transition: transform 0.25s ease;
+}
+
+/* Collapsed: slide everything except the header off-screen */
+#inventoryPanel.collapsed #inventoryItems {
+    display: none;
+}
+
+#inventoryHeader {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    cursor: pointer;
+    user-select: none;
+}
+
+#inventoryHeader:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+#inventoryToggle {
+    font-size: 15px;
+    line-height: 1;
+    flex-shrink: 0;
 }
 
 #inventoryTitle {
@@ -239,13 +264,25 @@ body {
     color: var(--nybble-text-dim);
     text-transform: uppercase;
     letter-spacing: 1px;
-    margin-bottom: 5px;
+    flex: 1;
+}
+
+/* Arrow indicator */
+#inventoryChevron {
+    font-size: 9px;
+    color: var(--nybble-text-dim);
+    transition: transform 0.2s ease;
+}
+
+#inventoryPanel.collapsed #inventoryChevron {
+    transform: rotate(180deg);
 }
 
 #inventoryItems {
     display: flex;
     flex-wrap: wrap;
     gap: 5px;
+    padding: 0 10px 8px;
 }
 
 .inv-item {

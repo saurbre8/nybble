@@ -310,6 +310,20 @@ export function petPanelApp(
     );
     allPets.push(critterEl);
 
+    // ── Inventory toggle ───────────────────────────────────────────────────
+    const invHeader = document.getElementById('inventoryHeader');
+    invHeader?.addEventListener('click', () => {
+        const panel = document.getElementById('inventoryPanel');
+        if (!panel) { return; }
+        panel.classList.toggle('collapsed');
+        // Re-measure floor after layout settles so critter position updates
+        setTimeout(() => {
+            const newH = panel.offsetHeight || 65;
+            const newFloor = themeFloor + newH + 8;
+            activeCritter?.positionBottom(newFloor);
+        }, 270); // matches CSS transition duration
+    });
+
     // ── Canvas + ball throwing ─────────────────────────────────────────────
     initCanvas(PET_CANVAS_ID);
     setupBallThrowing(PET_CANVAS_ID, PetSize.large, floor);
