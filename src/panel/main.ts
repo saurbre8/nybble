@@ -286,8 +286,14 @@ export function petPanelApp(
     vscodeApi = stateApi ?? acquireVsCodeApi();
 
     // ── Theme backgrounds ──────────────────────────────────────────────────
-    const themeInfo  = THEMES[theme];
-    const floor      = themeInfo.floor(PetSize.large);
+    const themeInfo = THEMES[theme];
+
+    // Lift the floor above the inventory panel so the critter is always visible.
+    // Measure at runtime so it works regardless of content height.
+    const inventoryEl   = document.getElementById('inventoryPanel');
+    const inventoryH    = inventoryEl ? inventoryEl.offsetHeight || 65 : 65;
+    const themeFloor    = themeInfo.floor(PetSize.large);
+    const floor         = themeFloor + inventoryH + 8; // 8px breathing room
 
     const bgEl = document.getElementById('background');
     const fgEl = document.getElementById('foreground');
