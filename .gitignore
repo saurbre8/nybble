@@ -10,3 +10,4 @@ coverage/
 media/main-bundle.js
 .DS_Store
 
+/.claude/worktrees
