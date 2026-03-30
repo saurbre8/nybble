@@ -6,10 +6,10 @@
    ============================================================ */
 
 :root {
-    --nybble-bg:          rgba(255, 235, 248, 0.82);
-    --nybble-border:      rgba(240, 170, 210, 0.45);
-    --nybble-text:        #5a3a5a;
-    --nybble-text-dim:    #b090b0;
+    --nybble-bg:          rgba(0, 0, 0, 0.55);
+    --nybble-border:      rgba(255, 255, 255, 0.12);
+    --nybble-text:        #e8e8e8;
+    --nybble-text-dim:    #999;
     --nybble-accent:      #e07ab8;
     --nybble-radius:      14px;
     --nybble-font:        system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -171,11 +171,11 @@ body {
 
 #critterLevel {
     font-size: 10px;
-    color: #c070a0;
-    background: rgba(224, 122, 184, 0.15);
+    color: var(--nybble-accent);
+    background: rgba(224, 122, 184, 0.18);
     padding: 2px 6px;
     border-radius: 10px;
-    border: 1px solid rgba(224, 122, 184, 0.25);
+    border: 1px solid rgba(224, 122, 184, 0.3);
 }
 
 #critterMood {
@@ -200,7 +200,7 @@ body {
 .stat-track {
     flex: 1;
     height: 7px;
-    background: rgba(200, 140, 190, 0.18);
+    background: rgba(255, 255, 255, 0.1);
     border-radius: 6px;
     overflow: hidden;
 }
@@ -254,7 +254,7 @@ body {
 }
 
 #inventoryHeader:hover {
-    background: rgba(224, 122, 184, 0.08);
+    background: rgba(255, 255, 255, 0.05);
 }
 
 #inventoryToggle {
@@ -293,26 +293,26 @@ body {
     align-items: center;
     gap: 4px;
     padding: 5px 10px;
-    background: rgba(255, 255, 255, 0.55);
+    background: rgba(255, 255, 255, 0.07);
     border: 1.5px solid var(--nybble-border);
     border-radius: 20px;
     cursor: pointer;
     font-size: 12px;
     transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
     user-select: none;
-    box-shadow: 0 1px 4px rgba(200, 120, 180, 0.1);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
 .inv-item:hover {
-    background: rgba(255, 255, 255, 0.85);
+    background: rgba(255, 255, 255, 0.15);
     border-color: var(--nybble-accent);
     transform: translateY(-2px);
-    box-shadow: 0 3px 8px rgba(200, 120, 180, 0.2);
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
 }
 
 .inv-item:active {
     transform: translateY(0);
-    background: rgba(240, 200, 230, 0.7);
+    background: rgba(255, 255, 255, 0.22);
 }
 
 .inv-item.no-feed {
@@ -323,8 +323,8 @@ body {
 .inv-item.no-feed:hover {
     transform: none;
     border-color: var(--nybble-border);
-    background: rgba(255, 255, 255, 0.55);
-    box-shadow: 0 1px 4px rgba(200, 120, 180, 0.1);
+    background: rgba(255, 255, 255, 0.07);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
 .inv-item-icon  { font-size: 14px; }
@@ -344,8 +344,8 @@ body {
     bottom: 72px;
     left: 50%;
     transform: translateX(-50%) translateY(10px);
-    background: rgba(255, 235, 248, 0.95);
-    border: 1.5px solid var(--nybble-border);
+    background: rgba(20, 15, 25, 0.92);
+    border: 1.5px solid var(--nybble-accent);
     border-radius: 20px;
     padding: 6px 16px;
     font-size: 12px;
