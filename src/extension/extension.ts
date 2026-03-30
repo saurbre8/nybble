@@ -633,7 +633,7 @@ function getHtmlForWebview(webview: vscode.Webview, extensionUri: vscode.Uri): s
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'nonce-${nonce}'; img-src ${webview.cspSource} https:; script-src 'nonce-${nonce}'; font-src ${webview.cspSource};">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'nonce-${nonce}'; img-src ${webview.cspSource} data: https:; script-src 'nonce-${nonce}'; font-src ${webview.cspSource};">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="${stylesResetUri}" rel="stylesheet" nonce="${nonce}">
     <link href="${stylesMainUri}" rel="stylesheet" nonce="${nonce}">
@@ -643,14 +643,57 @@ function getHtmlForWebview(webview: vscode.Webview, extensionUri: vscode.Uri): s
     <title>Nybble</title>
 </head>
 <body>
+    <!-- Stat overlay (top) -->
+    <div id="statPanel">
+        <div id="critterInfo">
+            <span id="critterName">...</span>
+            <span id="critterLevel">Lv.1</span>
+            <span id="critterMood">😐</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-icon">🍖</span>
+            <div class="stat-track"><div class="stat-fill" id="fill-hunger" style="width:80%"></div></div>
+        </div>
+        <div class="stat-row">
+            <span class="stat-icon">😊</span>
+            <div class="stat-track"><div class="stat-fill" id="fill-happiness" style="width:80%"></div></div>
+        </div>
+        <div class="stat-row">
+            <span class="stat-icon">⚡</span>
+            <div class="stat-track"><div class="stat-fill" id="fill-energy" style="width:90%"></div></div>
+        </div>
+        <div class="stat-row">
+            <span class="stat-icon">🛁</span>
+            <div class="stat-track"><div class="stat-fill" id="fill-cleanliness" style="width:100%"></div></div>
+        </div>
+    </div>
+
+    <!-- Canvas layers -->
     <div id="petCanvasContainer">
         <canvas id="ballCanvas"></canvas>
         <canvas id="foregroundEffectCanvas"></canvas>
         <canvas id="backgroundEffectCanvas"></canvas>
     </div>
+
+    <!-- Critter (emoji img + collision + speech bubble) -->
     <div id="petsContainer"></div>
+
+    <!-- Persistent mood speech bubble -->
+    <div id="moodBubble"></div>
+
+    <!-- Toast notification -->
+    <div id="rewardToast"></div>
+
+    <!-- Theme backgrounds -->
     <div id="foreground"></div>
     <div id="background"></div>
+
+    <!-- Inventory panel (bottom) -->
+    <div id="inventoryPanel">
+        <div id="inventoryTitle">Inventory</div>
+        <div id="inventoryItems"><span class="inv-empty">Save files to earn food!</span></div>
+    </div>
+
     <script nonce="${nonce}" src="${scriptUri}"></script>
     <script nonce="${nonce}">
         const __nybbleInit = ${initData};
@@ -659,7 +702,7 @@ function getHtmlForWebview(webview: vscode.Webview, extensionUri: vscode.Uri): s
             __nybbleInit.theme,
             __nybbleInit.themeKind,
             "${getCritterType()}",
-            "medium",
+            "large",
             "${getCritterType()}",
             false,
             false
