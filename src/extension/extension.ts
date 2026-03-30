@@ -1,1299 +1,766 @@
 import * as vscode from 'vscode';
 import { ColorThemeKind } from 'vscode';
 import {
-    PetSize,
-    PetColor,
-    PetType,
-    ExtPosition,
     Theme,
-    WebviewMessage,
-    ALL_COLORS,
-    ALL_PETS,
-    ALL_SCALES,
+    ExtPosition,
     ALL_THEMES,
 } from '../common/types';
-import { randomName } from '../common/names';
-import * as localize from '../common/localize';
-import { availableColors, normalizeColor } from '../panel/pets';
+import {
+    CritterState,
+    createDefaultCritterState,
+    applyDecay,
+    deriveMood,
+    addXp,
+    MOOD_DIALOGUE,
+} from '../critterState';
+import {
+    Inventory,
+    createDefaultInventory,
+    addItem,
+    removeItem,
+    getQuantity,
+    ITEMS,
+    rewardForSave,
+    rewardForLines,
+    rewardForFixingErrors,
+    milestoneReward,
+    CodingReward,
+} from '../inventory';
+import {
+    HabitatGrid,
+    createEmptyHabitat,
+    placeItem,
+    removeItem as removeHabitatItem,
+} from '../habitat';
 
-const EXTRA_PETS_KEY = 'vscode-pets.extra-pets';
-const EXTRA_PETS_KEY_TYPES = EXTRA_PETS_KEY + '.types';
-const EXTRA_PETS_KEY_COLORS = EXTRA_PETS_KEY + '.colors';
-const EXTRA_PETS_KEY_NAMES = EXTRA_PETS_KEY + '.names';
-const DEFAULT_PET_SCALE = PetSize.nano;
-const DEFAULT_COLOR = PetColor.brown;
-const DEFAULT_PET_TYPE = PetType.cat;
-const DEFAULT_POSITION = ExtPosition.panel;
-const DEFAULT_THEME = Theme.none;
+// ---------------------------------------------------------------------------
+// Persistence keys
+// ---------------------------------------------------------------------------
 
-class PetQuickPickItem implements vscode.QuickPickItem {
-    constructor(
-        public readonly name_: string,
-        public readonly type: string,
-        public readonly color: string,
-    ) {
-        this.name = name_;
-        this.label = name_;
-        this.description = `${color} ${type}`;
-    }
+const KEY_STATE     = 'nybble.state';
+const KEY_INVENTORY = 'nybble.inventory';
+const KEY_HABITAT   = 'nybble.habitat';
+const KEY_SAVES     = 'nybble.sessionSaves';
 
-    name: string;
-    label: string;
-    kind?: vscode.QuickPickItemKind | undefined;
-    description?: string | undefined;
-    detail?: string | undefined;
-    picked?: boolean | undefined;
-    alwaysShow?: boolean | undefined;
-    buttons?: readonly vscode.QuickInputButton[] | undefined;
-}
+// ---------------------------------------------------------------------------
+// Config helpers
+// ---------------------------------------------------------------------------
 
-let webviewViewProvider: PetWebviewViewProvider;
-
-function getConfiguredSize(): PetSize {
-    var size = vscode.workspace
-        .getConfiguration('vscode-pets')
-        .get<PetSize>('petSize', DEFAULT_PET_SCALE);
-    if (ALL_SCALES.lastIndexOf(size) === -1) {
-        size = DEFAULT_PET_SCALE;
-    }
-    return size;
-}
-
-function getConfiguredTheme(): Theme {
-    var theme = vscode.workspace
-        .getConfiguration('vscode-pets')
-        .get<Theme>('theme', DEFAULT_THEME);
-    if (ALL_THEMES.lastIndexOf(theme) === -1) {
-        theme = DEFAULT_THEME;
-    }
-    return theme;
-}
-
-function getConfiguredThemeKind(): ColorThemeKind {
-    return vscode.window.activeColorTheme.kind;
-}
-
-function getConfigurationPosition() {
+function getPosition(): ExtPosition {
     return vscode.workspace
-        .getConfiguration('vscode-pets')
-        .get<ExtPosition>('position', DEFAULT_POSITION);
+        .getConfiguration('nybble')
+        .get<ExtPosition>('position', ExtPosition.explorer);
 }
 
-function getThrowWithMouseConfiguration(): boolean {
+function getDecayRate(): string {
     return vscode.workspace
-        .getConfiguration('vscode-pets')
-        .get<boolean>('throwBallWithMouse', true);
+        .getConfiguration('nybble')
+        .get<string>('statDecayRate', 'normal');
 }
 
-function getEffectsDisabledConfiguration(): boolean {
+function getTheme(): Theme {
+    const t = vscode.workspace
+        .getConfiguration('nybble')
+        .get<Theme>('theme', Theme.none);
+    return ALL_THEMES.includes(t) ? t : Theme.none;
+}
+
+function getThemeKind(): ColorThemeKind {
+    return vscode.window.activeColorTheme.kind as unknown as ColorThemeKind;
+}
+
+function getCritterType(): string {
     return vscode.workspace
-        .getConfiguration('vscode-pets')
-        .get<boolean>('disableEffects', false);
+        .getConfiguration('nybble')
+        .get<string>('critterType', 'cat');
 }
 
-function updatePanelDisableEffects(): void {
-    const panel = getPetPanel();
-    if (panel !== undefined) {
-        panel.updateDisableEffects(getEffectsDisabledConfiguration());
-    }
+function getShowStatusBar(): boolean {
+    return vscode.workspace
+        .getConfiguration('nybble')
+        .get<boolean>('showStatusBar', true);
 }
 
-function updatePanelThrowWithMouse(): void {
-    const panel = getPetPanel();
-    if (panel !== undefined) {
-        panel.setThrowWithMouse(getThrowWithMouseConfiguration());
-    }
+// ---------------------------------------------------------------------------
+// Webview message types (extension ↔ webview protocol)
+// ---------------------------------------------------------------------------
+
+interface StateUpdateMessage {
+    type: 'stateUpdate';
+    state: CritterState;
+    mood: string;
+    dialogue: string;
 }
 
-async function updateExtensionPositionContext() {
-    await vscode.commands.executeCommand(
-        'setContext',
-        'vscode-pets.position',
-        getConfigurationPosition(),
-    );
+interface InventoryUpdateMessage {
+    type: 'inventoryUpdate';
+    inventory: Inventory;
 }
 
-export class PetSpecification {
-    color: PetColor;
-    type: PetType;
-    size: PetSize;
-    name: string;
-
-    constructor(color: PetColor, type: PetType, size: PetSize, name?: string) {
-        this.color = color;
-        this.type = type;
-        this.size = size;
-        if (!name) {
-            this.name = randomName(type);
-        } else {
-            this.name = name;
-        }
-    }
-
-    static fromConfiguration(): PetSpecification {
-        var color = vscode.workspace
-            .getConfiguration('vscode-pets')
-            .get<PetColor>('petColor', DEFAULT_COLOR);
-        if (ALL_COLORS.lastIndexOf(color) === -1) {
-            color = DEFAULT_COLOR;
-        }
-        var type = vscode.workspace
-            .getConfiguration('vscode-pets')
-            .get<PetType>('petType', DEFAULT_PET_TYPE);
-        if (ALL_PETS.lastIndexOf(type) === -1) {
-            type = DEFAULT_PET_TYPE;
-        }
-
-        return new PetSpecification(color, type, getConfiguredSize());
-    }
-
-    static collectionFromMemento(
-        context: vscode.ExtensionContext,
-        size: PetSize,
-    ): PetSpecification[] {
-        var contextTypes = context.globalState.get<PetType[]>(
-            EXTRA_PETS_KEY_TYPES,
-            [],
-        );
-        var contextColors = context.globalState.get<PetColor[]>(
-            EXTRA_PETS_KEY_COLORS,
-            [],
-        );
-        var contextNames = context.globalState.get<string[]>(
-            EXTRA_PETS_KEY_NAMES,
-            [],
-        );
-        var result: PetSpecification[] = new Array();
-        for (let index = 0; index < contextTypes.length; index++) {
-            result.push(
-                new PetSpecification(
-                    contextColors?.[index] ?? DEFAULT_COLOR,
-                    contextTypes[index],
-                    size,
-                    contextNames[index],
-                ),
-            );
-        }
-        return result;
-    }
+interface HabitatUpdateMessage {
+    type: 'habitatUpdate';
+    habitat: HabitatGrid;
 }
 
-export async function storeCollectionAsMemento(
-    context: vscode.ExtensionContext,
-    collection: PetSpecification[],
-) {
-    var contextTypes = new Array(collection.length);
-    var contextColors = new Array(collection.length);
-    var contextNames = new Array(collection.length);
-    for (let index = 0; index < collection.length; index++) {
-        contextTypes[index] = collection[index].type;
-        contextColors[index] = collection[index].color;
-        contextNames[index] = collection[index].name;
-    }
-    await context.globalState.update(EXTRA_PETS_KEY_TYPES, contextTypes);
-    await context.globalState.update(EXTRA_PETS_KEY_COLORS, contextColors);
-    await context.globalState.update(EXTRA_PETS_KEY_NAMES, contextNames);
-    context.globalState.setKeysForSync([
-        EXTRA_PETS_KEY_TYPES,
-        EXTRA_PETS_KEY_COLORS,
-        EXTRA_PETS_KEY_NAMES,
-    ]);
-}
+type ToWebviewMessage = StateUpdateMessage | InventoryUpdateMessage | HabitatUpdateMessage;
 
-let spawnPetStatusBar: vscode.StatusBarItem;
+interface FeedMessage    { type: 'feedCritter'; itemId: string; }
+interface PlaceMessage   { type: 'placeItem';   itemId: string; x: number; y: number; }
+interface RemoveMessage  { type: 'removeItem';  x: number; y: number; }
+interface PlayMessage    { type: 'playFetch'; }
+interface RenameMessage  { type: 'rename'; name: string; }
 
-interface IPetInfo {
-    type: PetType;
-    name: string;
-    color: PetColor;
-}
+type FromWebviewMessage = FeedMessage | PlaceMessage | RemoveMessage | PlayMessage | RenameMessage;
 
-async function handleRemovePetMessage(
-    this: vscode.ExtensionContext,
-    message: WebviewMessage,
-) {
-    var petList: IPetInfo[] = Array();
-    switch (message.command) {
-        case 'list-pets':
-            message.text.split('\n').forEach((pet) => {
-                if (!pet) {
-                    return;
-                }
-                var parts = pet.split(',');
-                petList.push({
-                    type: parts[0] as PetType,
-                    name: parts[1],
-                    color: parts[2] as PetColor,
-                });
-            });
-            break;
-        default:
-            return;
-    }
-    if (!petList) {
-        return;
-    }
-    if (!petList.length) {
-        await vscode.window.showErrorMessage(
-            vscode.l10n.t('There are no pets to remove.'),
-        );
-        return;
-    }
-    await vscode.window
-        .showQuickPick<PetQuickPickItem>(
-            petList.map((val) => {
-                return new PetQuickPickItem(val.name, val.type, val.color);
-            }),
-            {
-                placeHolder: vscode.l10n.t('Select the pet to remove.'),
-            },
-        )
-        .then(async (pet: PetQuickPickItem | undefined) => {
-            if (pet) {
-                const panel = getPetPanel();
-                if (panel !== undefined) {
-                    panel.deletePet(pet.name, pet.type, pet.color);
-                    const collection = petList
-                        .filter((item) => {
-                            return item.name !== pet.name;
-                        })
-                        .map<PetSpecification>((item) => {
-                            return new PetSpecification(
-                                item.color,
-                                item.type,
-                                PetSize.medium,
-                                item.name,
-                            );
-                        });
-                    await storeCollectionAsMemento(this, collection);
-                }
-            }
-        });
-}
+// ---------------------------------------------------------------------------
+// Panel / view provider (webview infrastructure)
+// ---------------------------------------------------------------------------
 
-function getPetPanel(): IPetPanel | undefined {
-    if (
-        getConfigurationPosition() === ExtPosition.explorer &&
-        webviewViewProvider
-    ) {
-        return webviewViewProvider;
-    } else if (PetPanel.currentPanel) {
-        return PetPanel.currentPanel;
-    } else {
-        return undefined;
-    }
-}
+let webviewViewProvider: NybbleWebviewViewProvider | undefined;
+let statusBarItem: vscode.StatusBarItem;
 
 function getWebview(): vscode.Webview | undefined {
-    if (
-        getConfigurationPosition() === ExtPosition.explorer &&
-        webviewViewProvider
-    ) {
+    if (getPosition() === ExtPosition.explorer && webviewViewProvider) {
         return webviewViewProvider.getWebview();
-    } else if (PetPanel.currentPanel) {
-        return PetPanel.currentPanel.getWebview();
+    }
+    if (NybblePanel.currentPanel) {
+        return NybblePanel.currentPanel.getWebview();
+    }
+    return undefined;
+}
+
+function postToWebview(msg: ToWebviewMessage): void {
+    void getWebview()?.postMessage(msg);
+}
+
+// ---------------------------------------------------------------------------
+// Extension state (in-memory, loaded from globalState on activate)
+// ---------------------------------------------------------------------------
+
+let critterState: CritterState;
+let inventory: Inventory;
+let habitat: HabitatGrid;
+let sessionSaves = 0;
+
+// Lines-written tracking (per document, reset when saved)
+const lineCounters = new Map<string, number>();
+
+// Diagnostics tracking (per file, watch for drops to zero)
+const prevDiagnostics = new Map<string, number>();
+
+// ---------------------------------------------------------------------------
+// Persistence helpers
+// ---------------------------------------------------------------------------
+
+function loadState(context: vscode.ExtensionContext): void {
+    critterState = context.globalState.get<CritterState>(KEY_STATE)
+        ?? createDefaultCritterState('', getCritterType());
+    inventory    = context.globalState.get<Inventory>(KEY_INVENTORY)
+        ?? createDefaultInventory();
+    habitat      = context.globalState.get<HabitatGrid>(KEY_HABITAT)
+        ?? createEmptyHabitat();
+    sessionSaves = context.globalState.get<number>(KEY_SAVES, 0);
+}
+
+async function saveState(context: vscode.ExtensionContext): Promise<void> {
+    await context.globalState.update(KEY_STATE,     critterState);
+    await context.globalState.update(KEY_INVENTORY, inventory);
+    await context.globalState.update(KEY_HABITAT,   habitat);
+    await context.globalState.update(KEY_SAVES,     sessionSaves);
+    context.globalState.setKeysForSync([KEY_STATE, KEY_INVENTORY, KEY_HABITAT]);
+}
+
+// ---------------------------------------------------------------------------
+// Reward helpers
+// ---------------------------------------------------------------------------
+
+function applyReward(context: vscode.ExtensionContext, reward: CodingReward): void {
+    inventory = addItem(inventory, reward.itemId, reward.quantity);
+    void saveState(context);
+    postToWebview({ type: 'inventoryUpdate', inventory });
+
+    const def = ITEMS[reward.itemId];
+    if (def) {
+        void vscode.window.setStatusBarMessage(
+            `$(gift) ${def.icon} +${reward.quantity} ${def.name} — ${reward.reason}`,
+            4000,
+        );
     }
 }
 
-export function activate(context: vscode.ExtensionContext) {
-    context.subscriptions.push(
-        vscode.commands.registerCommand('vscode-pets.start', async () => {
-            if (
-                getConfigurationPosition() === ExtPosition.explorer &&
-                webviewViewProvider
-            ) {
-                await vscode.commands.executeCommand('petsView.focus');
-            } else {
-                const spec = PetSpecification.fromConfiguration();
-                PetPanel.createOrShow(
-                    context.extensionUri,
-                    spec.color,
-                    spec.type,
-                    spec.size,
-                    getConfiguredTheme(),
-                    getConfiguredThemeKind(),
-                    getThrowWithMouseConfiguration(),
-                    getEffectsDisabledConfiguration(),
-                );
+function applyXpReward(context: vscode.ExtensionContext, xp: number): void {
+    const before = critterState.level;
+    critterState = addXp(critterState, xp);
+    if (critterState.level > before) {
+        void vscode.window.showInformationMessage(
+            `🎉 ${critterState.name || 'Your critter'} reached level ${critterState.level}!`,
+        );
+    }
+    void saveState(context);
+    broadcastState();
+}
 
-                if (PetPanel.currentPanel) {
-                    var collection = PetSpecification.collectionFromMemento(
-                        context,
-                        getConfiguredSize(),
-                    );
-                    collection.forEach((item) => {
-                        PetPanel.currentPanel?.spawnPet(item);
-                    });
-                    // Store the collection in the memento, incase any of the null values (e.g. name) have been set
-                    await storeCollectionAsMemento(context, collection);
+// ---------------------------------------------------------------------------
+// Broadcast current state to webview
+// ---------------------------------------------------------------------------
+
+function broadcastState(): void {
+    const mood = deriveMood(critterState);
+    const lines = MOOD_DIALOGUE[mood];
+    const dialogue = lines[Math.floor(Math.random() * lines.length)];
+    postToWebview({ type: 'stateUpdate', state: critterState, mood, dialogue });
+    updateStatusBar();
+}
+
+// ---------------------------------------------------------------------------
+// Status bar
+// ---------------------------------------------------------------------------
+
+const MOOD_ICONS: Record<string, string> = {
+    ecstatic:  '$(star-full)',
+    happy:     '$(smiley)',
+    content:   '$(circle-outline)',
+    sad:       '$(circle-slash)',
+    hungry:    '$(warning)',
+    tired:     '$(watch)',
+    dirty:     '$(dash)',
+    miserable: '$(error)',
+    sleeping:  '$(eye-closed)',
+};
+
+function updateStatusBar(): void {
+    if (!getShowStatusBar()) {
+        statusBarItem.hide();
+        return;
+    }
+    const mood = deriveMood(critterState);
+    const icon = MOOD_ICONS[mood] ?? '$(circle-outline)';
+    const name = critterState.name || 'Critter';
+    statusBarItem.text = `${icon} ${name}`;
+    statusBarItem.tooltip = `${name} is ${mood} | Lv.${critterState.level} | Click to open Nybble`;
+    statusBarItem.show();
+}
+
+// ---------------------------------------------------------------------------
+// Stat decay timer (runs every minute)
+// ---------------------------------------------------------------------------
+
+function startDecayTimer(context: vscode.ExtensionContext): NodeJS.Timeout {
+    return setInterval(() => {
+        critterState = applyDecay(critterState, getDecayRate());
+        void saveState(context);
+        broadcastState();
+    }, 60_000);
+}
+
+// ---------------------------------------------------------------------------
+// Webview message handler (incoming from webview)
+// ---------------------------------------------------------------------------
+
+function handleWebviewMessage(
+    message: FromWebviewMessage,
+    context: vscode.ExtensionContext,
+): void {
+    switch (message.type) {
+        case 'feedCritter': {
+            const { itemId } = message;
+            if (getQuantity(inventory, itemId) < 1) {
+                void vscode.window.showWarningMessage(`No ${ITEMS[itemId]?.name ?? itemId} left.`);
+                return;
+            }
+            const def = ITEMS[itemId];
+            if (!def) { return; }
+
+            inventory = removeItem(inventory, itemId);
+            critterState = {
+                ...critterState,
+                hunger:      Math.min(100, critterState.hunger      + def.hungerRestore),
+                happiness:   Math.min(100, critterState.happiness   + def.happinessRestore),
+                energy:      Math.min(100, critterState.energy      + def.energyRestore),
+                cleanliness: Math.min(100, critterState.cleanliness + def.cleanlinessRestore),
+            };
+            void saveState(context);
+            broadcastState();
+            postToWebview({ type: 'inventoryUpdate', inventory });
+            break;
+        }
+
+        case 'placeItem': {
+            const { itemId, x, y } = message;
+            const def = ITEMS[itemId];
+            if (!def || getQuantity(inventory, itemId) < 1) { return; }
+            inventory = removeItem(inventory, itemId);
+            habitat   = placeItem(habitat, x, y, { itemId, label: def.name });
+            void saveState(context);
+            postToWebview({ type: 'habitatUpdate', habitat });
+            postToWebview({ type: 'inventoryUpdate', inventory });
+            break;
+        }
+
+        case 'removeItem': {
+            const { x, y } = message;
+            habitat = removeHabitatItem(habitat, x, y);
+            void saveState(context);
+            postToWebview({ type: 'habitatUpdate', habitat });
+            break;
+        }
+
+        case 'playFetch': {
+            // Happiness boost, energy cost
+            critterState = {
+                ...critterState,
+                happiness: Math.min(100, critterState.happiness + 15),
+                energy:    Math.max(0,   critterState.energy    - 10),
+            };
+            void saveState(context);
+            broadcastState();
+            break;
+        }
+
+        case 'rename': {
+            const { name } = message;
+            if (name.trim().length === 0) { return; }
+            critterState = { ...critterState, name: name.trim() };
+            void saveState(context);
+            broadcastState();
+            updateStatusBar();
+            break;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Editor hooks
+// ---------------------------------------------------------------------------
+
+function registerEditorHooks(context: vscode.ExtensionContext): void {
+    // Save → earn food
+    context.subscriptions.push(
+        vscode.workspace.onDidSaveTextDocument(() => {
+            sessionSaves++;
+            applyReward(context, rewardForSave());
+            applyXpReward(context, 5);
+
+            // Milestone drops
+            const milestone = milestoneReward(sessionSaves);
+            if (milestone) {
+                applyReward(context, milestone);
+                void vscode.window.showInformationMessage(
+                    `🏆 Milestone! ${milestone.reason}: +${milestone.quantity} ${ITEMS[milestone.itemId]?.name}`,
+                );
+            }
+        }),
+    );
+
+    // Text changes → count lines written
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeTextDocument((e) => {
+            const uri = e.document.uri.toString();
+            let added = 0;
+            for (const change of e.contentChanges) {
+                // Count net new lines in this change
+                const newLines = (change.text.match(/\n/g) ?? []).length;
+                const removedLines = change.range.end.line - change.range.start.line;
+                added += Math.max(0, newLines - removedLines);
+            }
+            if (added > 0) {
+                lineCounters.set(uri, (lineCounters.get(uri) ?? 0) + added);
+                const total = lineCounters.get(uri)!;
+
+                // Award in chunks
+                if (total >= 50) {
+                    const reward = rewardForLines(total);
+                    if (reward) {
+                        applyReward(context, reward);
+                        applyXpReward(context, total >= 200 ? 20 : 10);
+                    }
+                    lineCounters.set(uri, 0); // reset counter
                 }
             }
         }),
     );
 
-    spawnPetStatusBar = vscode.window.createStatusBarItem(
+    // Diagnostics → reward for fixing errors
+    context.subscriptions.push(
+        vscode.languages.onDidChangeDiagnostics((e) => {
+            for (const uri of e.uris) {
+                const key = uri.toString();
+                const errors = vscode.languages
+                    .getDiagnostics(uri)
+                    .filter((d) => d.severity === vscode.DiagnosticSeverity.Error)
+                    .length;
+
+                const prev = prevDiagnostics.get(key) ?? 0;
+                if (prev > 0 && errors === 0) {
+                    applyReward(context, rewardForFixingErrors());
+                    applyXpReward(context, 15);
+                }
+                prevDiagnostics.set(key, errors);
+            }
+        }),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Activate
+// ---------------------------------------------------------------------------
+
+export function activate(context: vscode.ExtensionContext) {
+    loadState(context);
+
+    // Apply any offline decay since last session
+    critterState = applyDecay(critterState, getDecayRate());
+    void saveState(context);
+
+    // Status bar
+    statusBarItem = vscode.window.createStatusBarItem(
         vscode.StatusBarAlignment.Right,
         100,
     );
-    spawnPetStatusBar.command = 'vscode-pets.spawn-pet';
-    context.subscriptions.push(spawnPetStatusBar);
-
-    context.subscriptions.push(
-        vscode.window.onDidChangeActiveTextEditor(updateStatusBar),
-    );
-    context.subscriptions.push(
-        vscode.window.onDidChangeTextEditorSelection(updateStatusBar),
-    );
-    context.subscriptions.push(
-        vscode.window.onDidChangeActiveTextEditor(
-            updateExtensionPositionContext,
-        ),
-    );
+    statusBarItem.command = 'nybble.start';
+    context.subscriptions.push(statusBarItem);
     updateStatusBar();
 
-    const spec = PetSpecification.fromConfiguration();
-    webviewViewProvider = new PetWebviewViewProvider(
-        context.extensionUri,
-        spec.color,
-        spec.type,
-        spec.size,
-        getConfiguredTheme(),
-        getConfiguredThemeKind(),
-        getThrowWithMouseConfiguration(),
-        getEffectsDisabledConfiguration(),
+    // Decay timer
+    const decayTimer = startDecayTimer(context);
+    context.subscriptions.push({ dispose: () => clearInterval(decayTimer) });
+
+    // Editor hooks
+    registerEditorHooks(context);
+
+    // Position context
+    void updatePositionContext();
+    context.subscriptions.push(
+        vscode.window.onDidChangeActiveTextEditor(() => updatePositionContext()),
     );
-    updateExtensionPositionContext().catch((e) => {
-        console.error(e);
-    });
+
+    // ----- Commands --------------------------------------------------------
 
     context.subscriptions.push(
+        vscode.commands.registerCommand('nybble.start', async () => {
+            if (getPosition() === ExtPosition.explorer && webviewViewProvider) {
+                await vscode.commands.executeCommand('nybbleView.focus');
+            } else {
+                NybblePanel.createOrShow(context);
+            }
+        }),
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('nybble.feed', async () => {
+            const foodItems = inventory.slots
+                .filter((s) => {
+                    const def = ITEMS[s.itemId];
+                    return def && (def.category === 'food' || def.category === 'treat') && s.quantity > 0;
+                })
+                .map((s) => {
+                    const def = ITEMS[s.itemId]!;
+                    return {
+                        label: `${def.icon} ${def.name} (×${s.quantity})`,
+                        description: def.description,
+                        itemId: s.itemId,
+                    };
+                });
+
+            if (foodItems.length === 0) {
+                void vscode.window.showWarningMessage(
+                    'No food in inventory! Save some files to earn kibble.',
+                );
+                return;
+            }
+
+            const picked = await vscode.window.showQuickPick(foodItems, {
+                placeHolder: `Feed ${critterState.name || 'your critter'}`,
+            });
+            if (picked) {
+                handleWebviewMessage({ type: 'feedCritter', itemId: picked.itemId }, context);
+            }
+        }),
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('nybble.play', () => {
+            handleWebviewMessage({ type: 'playFetch' }, context);
+            // Also tell webview to animate
+            void getWebview()?.postMessage({ command: 'throw-ball' });
+        }),
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('nybble.rename', async () => {
+            const name = await vscode.window.showInputBox({
+                prompt: 'Give your critter a name',
+                placeHolder: critterState.name || 'Enter a name...',
+                value: critterState.name,
+            });
+            if (name !== undefined) {
+                handleWebviewMessage({ type: 'rename', name }, context);
+            }
+        }),
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('nybble.status', () => {
+            const mood = deriveMood(critterState);
+            const name = critterState.name || 'Your critter';
+            void vscode.window.showInformationMessage(
+                `${name} (Lv.${critterState.level}) — ${mood}\n` +
+                `🍖 Hunger: ${Math.round(critterState.hunger)}  ` +
+                `😊 Happiness: ${Math.round(critterState.happiness)}  ` +
+                `⚡ Energy: ${Math.round(critterState.energy)}  ` +
+                `🛁 Clean: ${Math.round(critterState.cleanliness)}`,
+            );
+        }),
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('nybble.resetCritter', async () => {
+            const confirm = await vscode.window.showWarningMessage(
+                'Reset your critter? This clears all stats, inventory, and habitat.',
+                { modal: true },
+                'Reset',
+            );
+            if (confirm === 'Reset') {
+                critterState = createDefaultCritterState('', getCritterType());
+                inventory    = createDefaultInventory();
+                habitat      = createEmptyHabitat();
+                sessionSaves = 0;
+                void saveState(context);
+                broadcastState();
+                postToWebview({ type: 'inventoryUpdate', inventory });
+                postToWebview({ type: 'habitatUpdate', habitat });
+            }
+        }),
+    );
+
+    // ----- Webview view provider (Explorer sidebar) ------------------------
+
+    webviewViewProvider = new NybbleWebviewViewProvider(context);
+    context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
-            PetWebviewViewProvider.viewType,
+            NybbleWebviewViewProvider.viewType,
             webviewViewProvider,
         ),
     );
 
-    context.subscriptions.push(
-        vscode.commands.registerCommand('vscode-pets.throw-ball', () => {
-            const panel = getPetPanel();
-            if (panel !== undefined) {
-                panel.throwBall();
-            }
-        }),
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand('vscode-pets.delete-pet', async () => {
-            const panel = getPetPanel();
-            if (panel !== undefined) {
-                panel.listPets();
-                getWebview()?.onDidReceiveMessage(
-                    handleRemovePetMessage,
-                    context,
-                );
-            } else {
-                await createPetPlayground(context);
-            }
-        }),
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand('vscode-pets.roll-call', async () => {
-            const panel = getPetPanel();
-            if (panel !== undefined) {
-                panel.rollCall();
-            } else {
-                await createPetPlayground(context);
-            }
-        }),
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand(
-            'vscode-pets.export-pet-list',
-            async () => {
-                const pets = PetSpecification.collectionFromMemento(
-                    context,
-                    getConfiguredSize(),
-                );
-                const petJson = JSON.stringify(pets, null, 2);
-                const fileName = `pets-${Date.now()}.json`;
-                if (!vscode.workspace.workspaceFolders) {
-                    await vscode.window.showErrorMessage(
-                        vscode.l10n.t(
-                            'You must have a folder or workspace open to export pets.',
-                        ),
-                    );
-                    return;
-                }
-                const filePath = vscode.Uri.joinPath(
-                    vscode.workspace.workspaceFolders[0].uri,
-                    fileName,
-                );
-                const newUri = vscode.Uri.file(fileName).with({
-                    scheme: 'untitled',
-                    path: filePath.fsPath,
-                });
-                await vscode.workspace
-                    .openTextDocument(newUri)
-                    .then(async (doc) => {
-                        await vscode.window
-                            .showTextDocument(doc)
-                            .then(async (editor) => {
-                                await editor.edit((edit) => {
-                                    edit.insert(
-                                        new vscode.Position(0, 0),
-                                        petJson,
-                                    );
-                                });
-                            });
-                    });
-            },
-        ),
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand(
-            'vscode-pets.import-pet-list',
-            async () => {
-                const options: vscode.OpenDialogOptions = {
-                    canSelectMany: false,
-                    openLabel: 'Open pets.json',
-                    filters: {
-                        json: ['json'],
-                    },
-                };
-                const fileUri = await vscode.window.showOpenDialog(options);
-
-                if (fileUri && fileUri[0]) {
-                    console.log('Selected file: ' + fileUri[0].fsPath);
-                    try {
-                        const fileContents = await vscode.workspace.fs.readFile(
-                            fileUri[0],
-                        );
-                        const petsToLoad = JSON.parse(
-                            String.fromCharCode.apply(
-                                null,
-                                Array.from(fileContents),
-                            ),
-                        );
-
-                        // load the pets into the collection
-                        var collection = PetSpecification.collectionFromMemento(
-                            context,
-                            getConfiguredSize(),
-                        );
-                        // fetch just the pet types
-                        const panel = getPetPanel();
-                        for (let i = 0; i < petsToLoad.length; i++) {
-                            const pet = petsToLoad[i];
-                            const petSpec = new PetSpecification(
-                                normalizeColor(pet.color, pet.type),
-                                pet.type,
-                                pet.size,
-                                pet.name,
-                            );
-                            collection.push(petSpec);
-                            if (panel !== undefined) {
-                                panel.spawnPet(petSpec);
-                            }
-                        }
-                        await storeCollectionAsMemento(context, collection);
-                    } catch (e: any) {
-                        await vscode.window.showErrorMessage(
-                            vscode.l10n.t(
-                                'Failed to import pets: {0}',
-                                e?.message,
-                            ),
-                        );
-                    }
-                }
-            },
-        ),
-    );
-
-    const pathExists = async (uri: vscode.Uri): Promise<boolean> => {
-        try {
-            await vscode.workspace.fs.stat(uri);
-            return true; // File exists
-        } catch {
-            return false; // File doesn't exist
-        }
-    };
-
-    const getPetIconPath = async (
-        petType: PetType,
-        color?: PetColor,
-    ): Promise<vscode.ThemeIcon | vscode.Uri> => {
-        if (color) {
-            const colorClean = color.replace(' ', '_');
-            const iconColorUri = vscode.Uri.joinPath(
-                context.extensionUri,
-                'media',
-                petType,
-                `icon_${colorClean}.png`,
-            );
-            if (await pathExists(iconColorUri)) {
-                return iconColorUri;
-            }
-        }
-        const iconUri = vscode.Uri.joinPath(
-            context.extensionUri,
-            'media',
-            petType,
-            'icon.png',
-        );
-        if (await pathExists(iconUri)) {
-            return iconUri;
-        }
-
-        // No custom icon found, use fallback
-        return vscode.Uri.joinPath(context.extensionUri, 'media', 'cat.svg');
-    };
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand('vscode-pets.spawn-pet', async () => {
-            const panel = getPetPanel();
-            if (
-                getConfigurationPosition() === ExtPosition.explorer &&
-                webviewViewProvider
-            ) {
-                await vscode.commands.executeCommand('petsView.focus');
-            }
-            if (panel) {
-                // Create QuickPick items with proper icon paths
-                const quickPickItems = await Promise.all(
-                    localize
-                        .stringListAsQuickPickItemList<PetType>(ALL_PETS)
-                        .map(async (qpi) => ({
-                            ...qpi,
-                            iconPath: await getPetIconPath(qpi.value),
-                        })),
-                );
-
-                const selectedPetType = await vscode.window.showQuickPick(
-                    quickPickItems,
-                    {
-                        placeHolder: vscode.l10n.t('Select a pet'),
-                    },
-                );
-                if (selectedPetType === undefined) {
-                    console.log(
-                        'Cancelled Spawning Pet - No Pet Type Selected',
-                    );
-                    return;
-                }
-                var petColor: PetColor = DEFAULT_COLOR;
-                const possibleColors = availableColors(selectedPetType.value);
-
-                if (possibleColors.length > 1) {
-                    const colorQuickPickItems = await Promise.all(
-                        localize
-                            .stringListAsQuickPickItemList<PetColor>(
-                                possibleColors,
-                            )
-                            .map(async (qpi) => ({
-                                ...qpi,
-                                iconPath: await getPetIconPath(
-                                    selectedPetType.value,
-                                    qpi.value,
-                                ),
-                            })),
-                    );
-
-                    var selectedColor = await vscode.window.showQuickPick(
-                        colorQuickPickItems,
-                        {
-                            placeHolder: vscode.l10n.t('Select a color'),
-                        },
-                    );
-                    if (selectedColor === undefined) {
-                        console.log(
-                            'Cancelled Spawning Pet - No Pet Color Selected',
-                        );
-                        return;
-                    }
-                    petColor = selectedColor.value;
-                } else {
-                    petColor = possibleColors[0];
-                }
-
-                if (petColor === undefined) {
-                    console.log(
-                        'Cancelled Spawning Pet - No Pet Color Selected',
-                    );
-                    return;
-                }
-
-                const name = await vscode.window.showInputBox({
-                    placeHolder: vscode.l10n.t('Leave blank for a random name'),
-                    prompt: vscode.l10n.t('Name your pet'),
-                    value: randomName(selectedPetType.value),
-                });
-                const spec = new PetSpecification(
-                    petColor,
-                    selectedPetType.value,
-                    getConfiguredSize(),
-                    name,
-                );
-                if (!spec.type || !spec.color || !spec.size) {
-                    return vscode.window.showWarningMessage(
-                        vscode.l10n.t('Cancelled Spawning Pet'),
-                    );
-                } else if (spec) {
-                    panel.spawnPet(spec);
-                }
-                var collection = PetSpecification.collectionFromMemento(
-                    context,
-                    getConfiguredSize(),
-                );
-                collection.push(spec);
-                await storeCollectionAsMemento(context, collection);
-            } else {
-                await createPetPlayground(context);
-                await vscode.window.showInformationMessage(
-                    vscode.l10n.t(
-                        "A Pet Playground has been created. You can now use the 'Spawn Additional Pet' Command to add more pets.",
-                    ),
-                );
-            }
-        }),
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand(
-            'vscode-pets.remove-all-pets',
-            async () => {
-                const panel = getPetPanel();
-                if (panel !== undefined) {
-                    panel.resetPets();
-                    await storeCollectionAsMemento(context, []);
-                } else {
-                    await createPetPlayground(context);
-                    await vscode.window.showInformationMessage(
-                        vscode.l10n.t(
-                            "A Pet Playground has been created. You can now use the 'Remove All Pets' Command to remove all pets.",
-                        ),
-                    );
-                }
-            },
-        ),
-    );
-
-    // Listening to configuration changes
-    context.subscriptions.push(
-        vscode.workspace.onDidChangeConfiguration(
-            (e: vscode.ConfigurationChangeEvent): void => {
-                if (
-                    e.affectsConfiguration('vscode-pets.petColor') ||
-                    e.affectsConfiguration('vscode-pets.petType') ||
-                    e.affectsConfiguration('vscode-pets.petSize') ||
-                    e.affectsConfiguration('vscode-pets.theme') ||
-                    e.affectsConfiguration('workbench.colorTheme')
-                ) {
-                    const spec = PetSpecification.fromConfiguration();
-                    const panel = getPetPanel();
-                    if (panel) {
-                        panel.updatePetColor(spec.color);
-                        panel.updatePetSize(spec.size);
-                        panel.updatePetType(spec.type);
-                        panel.updateTheme(
-                            getConfiguredTheme(),
-                            getConfiguredThemeKind(),
-                        );
-                        panel.update();
-                    }
-                }
-
-                if (e.affectsConfiguration('vscode-pets.position')) {
-                    void updateExtensionPositionContext();
-                }
-
-                if (e.affectsConfiguration('vscode-pets.throwBallWithMouse')) {
-                    updatePanelThrowWithMouse();
-                }
-
-                if (e.affectsConfiguration('vscode-pets.disableEffects')) {
-                    updatePanelDisableEffects();
-                }
-            },
-        ),
-    );
+    // ----- Panel serializer -----------------------------------------------
 
     if (vscode.window.registerWebviewPanelSerializer) {
-        // Make sure we register a serializer in activation event
-        vscode.window.registerWebviewPanelSerializer(PetPanel.viewType, {
-            async deserializeWebviewPanel(webviewPanel: vscode.WebviewPanel) {
-                // Reset the webview options so we use latest uri for `localResourceRoots`.
-                webviewPanel.webview.options = getWebviewOptions(
-                    context.extensionUri,
-                );
-                const spec = PetSpecification.fromConfiguration();
-                PetPanel.revive(
-                    webviewPanel,
-                    context.extensionUri,
-                    spec.color,
-                    spec.type,
-                    spec.size,
-                    getConfiguredTheme(),
-                    getConfiguredThemeKind(),
-                    getThrowWithMouseConfiguration(),
-                    getEffectsDisabledConfiguration(),
-                );
+        vscode.window.registerWebviewPanelSerializer(NybblePanel.viewType, {
+            async deserializeWebviewPanel(panel: vscode.WebviewPanel) {
+                panel.webview.options = getWebviewOptions(context.extensionUri);
+                NybblePanel.revive(panel, context);
             },
         });
     }
+
+    // Config change listener
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration((e) => {
+            if (e.affectsConfiguration('nybble.position')) {
+                void updatePositionContext();
+            }
+            if (e.affectsConfiguration('nybble.showStatusBar')) {
+                updateStatusBar();
+            }
+        }),
+    );
 }
 
-function updateStatusBar(): void {
-    spawnPetStatusBar.text = `$(squirrel)`;
-    spawnPetStatusBar.tooltip = vscode.l10n.t('Spawn Pet');
-    spawnPetStatusBar.show();
+async function updatePositionContext(): Promise<void> {
+    await vscode.commands.executeCommand(
+        'setContext',
+        'nybble.position',
+        getPosition(),
+    );
 }
 
-export function spawnPetDeactivate() {
-    spawnPetStatusBar.dispose();
+export function deactivate() {
+    statusBarItem?.dispose();
 }
+
+// ---------------------------------------------------------------------------
+// Webview helpers
+// ---------------------------------------------------------------------------
 
 function getWebviewOptions(
     extensionUri: vscode.Uri,
 ): vscode.WebviewOptions & vscode.WebviewPanelOptions {
     return {
-        // Enable javascript in the webview
         enableScripts: true,
-        // And restrict the webview to only loading content from our extension's `media` directory.
         localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')],
     };
 }
 
-interface IPetPanel {
-    throwBall(): void;
-    resetPets(): void;
-    spawnPet(spec: PetSpecification): void;
-    deletePet(petName: string, petType: string, petColor: string): void;
-    listPets(): void;
-    rollCall(): void;
-    themeKind(): vscode.ColorThemeKind;
-    throwBallWithMouse(): boolean;
-    updatePetColor(newColor: PetColor): void;
-    updatePetType(newType: PetType): void;
-    updatePetSize(newSize: PetSize): void;
-    updateTheme(newTheme: Theme, themeKind: vscode.ColorThemeKind): void;
-    update(): void;
-    setThrowWithMouse(newThrowWithMouse: boolean): void;
-    updateDisableEffects(disableEffects: boolean): void;
-    tick(): void;
-    dispose(): void;
-}
-
-class PetWebviewContainer implements IPetPanel {
-    protected _extensionUri: vscode.Uri;
-    protected _disposables: vscode.Disposable[] = [];
-    protected _petColor: PetColor;
-    protected _petType: PetType;
-    protected _petSize: PetSize;
-    protected _theme: Theme;
-    protected _themeKind: vscode.ColorThemeKind;
-    protected _throwBallWithMouse: boolean;
-    protected _disableEffects: boolean;
-    protected _tickIntervalId: NodeJS.Timeout | number | undefined;
-
-    constructor(
-        extensionUri: vscode.Uri,
-        color: PetColor,
-        type: PetType,
-        size: PetSize,
-        theme: Theme,
-        themeKind: ColorThemeKind,
-        throwBallWithMouse: boolean,
-        disableEffects: boolean,
-    ) {
-        this._extensionUri = extensionUri;
-        this._petColor = color;
-        this._petType = type;
-        this._petSize = size;
-        this._theme = theme;
-        this._themeKind = themeKind;
-        this._throwBallWithMouse = throwBallWithMouse;
-        this._disableEffects = disableEffects;
-        this._tickIntervalId = setInterval(() => {
-            this.tick();
-        }, 100);
-    }
-
-    public petColor(): PetColor {
-        return normalizeColor(this._petColor, this._petType);
-    }
-
-    public petType(): PetType {
-        return this._petType;
-    }
-
-    public petSize(): PetSize {
-        return this._petSize;
-    }
-
-    public theme(): Theme {
-        return this._theme;
-    }
-
-    public themeKind(): vscode.ColorThemeKind {
-        return this._themeKind;
-    }
-
-    public throwBallWithMouse(): boolean {
-        return this._throwBallWithMouse;
-    }
-
-    public disableEffects(): boolean {
-        return this._disableEffects;
-    }
-
-    public updatePetColor(newColor: PetColor) {
-        this._petColor = newColor;
-    }
-
-    public updatePetType(newType: PetType) {
-        this._petType = newType;
-    }
-
-    public updatePetSize(newSize: PetSize) {
-        this._petSize = newSize;
-    }
-
-    public updateTheme(newTheme: Theme, themeKind: vscode.ColorThemeKind) {
-        this._theme = newTheme;
-        this._themeKind = themeKind;
-    }
-
-    public setThrowWithMouse(newThrowWithMouse: boolean): void {
-        this._throwBallWithMouse = newThrowWithMouse;
-        void this.getWebview().postMessage({
-            command: 'throw-with-mouse',
-            enabled: newThrowWithMouse,
-        });
-    }
-
-    public updateDisableEffects(disableEffects: boolean): void {
-        this._disableEffects = disableEffects;
-        void this.getWebview().postMessage({
-            command: 'disable-effects',
-            disabled: disableEffects,
-        });
-    }
-
-    public throwBall() {
-        void this.getWebview().postMessage({
-            command: 'throw-ball',
-        });
-    }
-
-    public resetPets(): void {
-        void this.getWebview().postMessage({
-            command: 'reset-pet',
-        });
-    }
-
-    public spawnPet(spec: PetSpecification) {
-        void this.getWebview().postMessage({
-            command: 'spawn-pet',
-            type: spec.type,
-            color: spec.color,
-            name: spec.name,
-        });
-        void this.getWebview().postMessage({
-            command: 'set-size',
-            size: spec.size,
-        });
-    }
-
-    public listPets() {
-        void this.getWebview().postMessage({ command: 'list-pets' });
-    }
-
-    public rollCall(): void {
-        void this.getWebview().postMessage({ command: 'roll-call' });
-    }
-
-    public deletePet(petName: string, petType: string, petColor: string) {
-        void this.getWebview().postMessage({
-            command: 'delete-pet',
-            name: petName,
-            type: petType,
-            color: petColor,
-        });
-    }
-
-    protected getWebview(): vscode.Webview {
-        throw new Error('Not implemented');
-    }
-
-    protected _update() {
-        const webview = this.getWebview();
-        webview.html = this._getHtmlForWebview(webview);
-    }
-
-    public update() {
-        this._update();
-    }
-
-    protected _getHtmlForWebview(webview: vscode.Webview) {
-        // Local path to main script run in the webview
-        const scriptPathOnDisk = vscode.Uri.joinPath(
-            this._extensionUri,
-            'media',
-            'main-bundle.js',
-        );
-
-        // And the uri we use to load this script in the webview
-        const scriptUri = webview.asWebviewUri(scriptPathOnDisk);
-
-        // Local path to css styles
-        const styleResetPath = vscode.Uri.joinPath(
-            this._extensionUri,
-            'media',
-            'reset.css',
-        );
-        const stylesPathMainPath = vscode.Uri.joinPath(
-            this._extensionUri,
-            'media',
-            'pets.css',
-        );
-        const silkScreenFontPath = webview.asWebviewUri(
-            vscode.Uri.joinPath(
-                this._extensionUri,
-                'media',
-                'Silkscreen-Regular.ttf',
-            ),
-        );
-
-        // Uri to load styles into webview
-        const stylesResetUri = webview.asWebviewUri(styleResetPath);
-        const stylesMainUri = webview.asWebviewUri(stylesPathMainPath);
-
-        // Get path to resource on disk
-        const basePetUri = webview.asWebviewUri(
-            vscode.Uri.joinPath(this._extensionUri, 'media'),
-        );
-
-        // Use a nonce to only allow specific scripts to be run
-        const nonce = getNonce();
-
-        return `<!DOCTYPE html>
-			<html lang="en">
-			<head>
-				<meta charset="UTF-8">
-				<!--
-					Use a content security policy to only allow loading images from https or from our extension directory,
-					and only allow scripts that have a specific nonce.
-				-->
-				<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${
-                    webview.cspSource
-                } 'nonce-${nonce}'; img-src ${
-            webview.cspSource
-        } https:; script-src 'nonce-${nonce}';
-                font-src ${webview.cspSource};">
-				<meta name="viewport" content="width=device-width, initial-scale=1.0">
-				<link href="${stylesResetUri}" rel="stylesheet" nonce="${nonce}">
-				<link href="${stylesMainUri}" rel="stylesheet" nonce="${nonce}">
-                <style nonce="${nonce}">
-                @font-face {
-                    font-family: 'silkscreen';
-                    src: url('${silkScreenFontPath}') format('truetype');
-                }
-                </style>
-				<title>VS Code Pets</title>
-			</head>
-			<body>
-                <div id="petCanvasContainer">
-                    <canvas id="ballCanvas"></canvas>
-                    <canvas id="foregroundEffectCanvas"></canvas>
-                    <canvas id="backgroundEffectCanvas"></canvas>
-                </div>
-				<div id="petsContainer"></div>
-				<div id="foreground"></div>
-                <div id="background"></div>
-				<script nonce="${nonce}" src="${scriptUri}"></script>
-				<script nonce="${nonce}">petApp.petPanelApp("${basePetUri}", "${this.theme()}", ${this.themeKind()}, "${this.petColor()}", "${this.petSize()}", "${this.petType()}", ${this.throwBallWithMouse()}, ${this.disableEffects()});</script>
-			</body>
-			</html>`;
-    }
-
-    public tick() {
-        throw new Error('Not implemented');
-    }
-
-    public dispose() {
-        // Dispose of all disposables
-        while (this._disposables.length) {
-            const x = this._disposables.pop();
-            if (x) {
-                x.dispose();
-            }
-        }
-
-        if (this._tickIntervalId) {
-            clearInterval(this._tickIntervalId);
-            this._tickIntervalId = undefined;
-        }
-    }
-}
-
-function handleWebviewMessage(message: WebviewMessage) {
-    switch (message.command) {
-        case 'alert':
-            void vscode.window.showErrorMessage(message.text);
-            return;
-        case 'info':
-            void vscode.window.showInformationMessage(message.text);
-            return;
-    }
-}
-
-/**
- * Manages pet coding webview panels
- */
-class PetPanel extends PetWebviewContainer implements IPetPanel {
-    /**
-     * Track the currently panel. Only allow a single panel to exist at a time.
-     */
-    public static currentPanel: PetPanel | undefined;
-
-    public static readonly viewType = 'petCoding';
-
-    private readonly _panel: vscode.WebviewPanel;
-
-    public static createOrShow(
-        extensionUri: vscode.Uri,
-        petColor: PetColor,
-        petType: PetType,
-        petSize: PetSize,
-        theme: Theme,
-        themeKind: ColorThemeKind,
-        throwBallWithMouse: boolean,
-        disableEffects: boolean,
-    ) {
-        const column = vscode.window.activeTextEditor
-            ? vscode.window.activeTextEditor.viewColumn
-            : undefined;
-        // If we already have a panel, show it.
-        if (PetPanel.currentPanel) {
-            if (
-                petColor === PetPanel.currentPanel.petColor() &&
-                petType === PetPanel.currentPanel.petType() &&
-                petSize === PetPanel.currentPanel.petSize()
-            ) {
-                PetPanel.currentPanel._panel.reveal(column);
-                return;
-            } else {
-                PetPanel.currentPanel.updatePetColor(petColor);
-                PetPanel.currentPanel.updatePetType(petType);
-                PetPanel.currentPanel.updatePetSize(petSize);
-                PetPanel.currentPanel.update();
-            }
-        }
-
-        // Otherwise, create a new panel.
-        const panel = vscode.window.createWebviewPanel(
-            PetPanel.viewType,
-            vscode.l10n.t('Pet Panel'),
-            vscode.ViewColumn.Two,
-            getWebviewOptions(extensionUri),
-        );
-
-        PetPanel.currentPanel = new PetPanel(
-            panel,
-            extensionUri,
-            petColor,
-            petType,
-            petSize,
-            theme,
-            themeKind,
-            throwBallWithMouse,
-            disableEffects,
-        );
-    }
-
-    public static revive(
-        panel: vscode.WebviewPanel,
-        extensionUri: vscode.Uri,
-        petColor: PetColor,
-        petType: PetType,
-        petSize: PetSize,
-        theme: Theme,
-        themeKind: ColorThemeKind,
-        throwBallWithMouse: boolean,
-        disableEffects: boolean,
-    ) {
-        PetPanel.currentPanel = new PetPanel(
-            panel,
-            extensionUri,
-            petColor,
-            petType,
-            petSize,
-            theme,
-            themeKind,
-            throwBallWithMouse,
-            disableEffects,
-        );
-    }
-
-    private constructor(
-        panel: vscode.WebviewPanel,
-        extensionUri: vscode.Uri,
-        color: PetColor,
-        type: PetType,
-        size: PetSize,
-        theme: Theme,
-        themeKind: ColorThemeKind,
-        throwBallWithMouse: boolean,
-        disableEffects: boolean,
-    ) {
-        super(
-            extensionUri,
-            color,
-            type,
-            size,
-            theme,
-            themeKind,
-            throwBallWithMouse,
-            disableEffects,
-        );
-
-        this._panel = panel;
-
-        // Set the webview's initial html content
-        this._update();
-
-        // Listen for when the panel is disposed
-        // This happens when the user closes the panel or when the panel is closed programmatically
-        this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
-
-        // Update the content based on view changes
-        this._panel.onDidChangeViewState(
-            () => {
-                this.update();
-            },
-            null,
-            this._disposables,
-        );
-
-        // Handle messages from the webview
-        this._panel.webview.onDidReceiveMessage(
-            handleWebviewMessage,
-            null,
-            this._disposables,
-        );
-    }
-
-    public tick() {
-        if (this._panel.visible) {
-            void this.getWebview().postMessage({ command: 'tick' });
-        }
-    }
-
-    public dispose() {
-        PetPanel.currentPanel = undefined;
-
-        // Clean up our resources
-        this._panel.dispose();
-
-        super.dispose();
-    }
-
-    public update() {
-        if (this._panel.visible) {
-            this._update();
-        }
-    }
-
-    getWebview(): vscode.Webview {
-        return this._panel.webview;
-    }
-}
-
-/**
- * Managers pet coding webview views (Explorer)
- */
-class PetWebviewViewProvider extends PetWebviewContainer {
-    public static readonly viewType = 'petsView';
-
-    private _webviewView?: vscode.WebviewView;
-
-    resolveWebviewView(webviewView: vscode.WebviewView): void | Thenable<void> {
-        this._webviewView = webviewView;
-
-        webviewView.webview.options = getWebviewOptions(this._extensionUri);
-        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
-
-        webviewView.webview.onDidReceiveMessage(
-            handleWebviewMessage,
-            null,
-            this._disposables,
-        );
-    }
-
-    public tick() {
-        if (this._webviewView) {
-            void this.getWebview().postMessage({ command: 'tick' });
-        }
-    }
-
-    getWebview(): vscode.Webview {
-        if (this._webviewView === undefined) {
-            throw new Error(
-                vscode.l10n.t(
-                    'Panel not active, make sure the pets view is visible before running this command.',
-                ),
-            );
-        } else {
-            return this._webviewView.webview;
-        }
-    }
-
-    public dispose() {
-        this._webviewView = undefined;
-        super.dispose();
-    }
-}
-
-function getNonce() {
+function getNonce(): string {
     let text = '';
-    const possible =
-        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     for (let i = 0; i < 32; i++) {
-        text += possible.charAt(Math.floor(Math.random() * possible.length));
+        text += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     return text;
 }
 
-async function createPetPlayground(context: vscode.ExtensionContext) {
-    const spec = PetSpecification.fromConfiguration();
-    PetPanel.createOrShow(
-        context.extensionUri,
-        spec.color,
-        spec.type,
-        spec.size,
-        getConfiguredTheme(),
-        getConfiguredThemeKind(),
-        getThrowWithMouseConfiguration(),
-        getEffectsDisabledConfiguration(),
+function getHtmlForWebview(webview: vscode.Webview, extensionUri: vscode.Uri): string {
+    const scriptUri = webview.asWebviewUri(
+        vscode.Uri.joinPath(extensionUri, 'media', 'main-bundle.js'),
     );
-    if (PetPanel.currentPanel) {
-        var collection = PetSpecification.collectionFromMemento(
-            context,
-            getConfiguredSize(),
+    const stylesResetUri = webview.asWebviewUri(
+        vscode.Uri.joinPath(extensionUri, 'media', 'reset.css'),
+    );
+    const stylesMainUri = webview.asWebviewUri(
+        vscode.Uri.joinPath(extensionUri, 'media', 'pets.css'),
+    );
+    const silkscreenUri = webview.asWebviewUri(
+        vscode.Uri.joinPath(extensionUri, 'media', 'Silkscreen-Regular.ttf'),
+    );
+    const basePetUri = webview.asWebviewUri(
+        vscode.Uri.joinPath(extensionUri, 'media'),
+    );
+    const nonce = getNonce();
+
+    // Pass initial data as JSON in the HTML so the webview bootstraps correctly
+    const initData = JSON.stringify({
+        state:     critterState,
+        inventory: inventory,
+        habitat:   habitat,
+        mood:      deriveMood(critterState),
+        theme:     getTheme(),
+        themeKind: getThemeKind(),
+    });
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'nonce-${nonce}'; img-src ${webview.cspSource} https:; script-src 'nonce-${nonce}'; font-src ${webview.cspSource};">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="${stylesResetUri}" rel="stylesheet" nonce="${nonce}">
+    <link href="${stylesMainUri}" rel="stylesheet" nonce="${nonce}">
+    <style nonce="${nonce}">
+        @font-face { font-family: 'silkscreen'; src: url('${silkscreenUri}') format('truetype'); }
+    </style>
+    <title>Nybble</title>
+</head>
+<body>
+    <div id="petCanvasContainer">
+        <canvas id="ballCanvas"></canvas>
+        <canvas id="foregroundEffectCanvas"></canvas>
+        <canvas id="backgroundEffectCanvas"></canvas>
+    </div>
+    <div id="petsContainer"></div>
+    <div id="foreground"></div>
+    <div id="background"></div>
+    <script nonce="${nonce}" src="${scriptUri}"></script>
+    <script nonce="${nonce}">
+        const __nybbleInit = ${initData};
+        petApp.petPanelApp(
+            "${basePetUri}",
+            __nybbleInit.theme,
+            __nybbleInit.themeKind,
+            "${getCritterType()}",
+            "medium",
+            "${getCritterType()}",
+            false,
+            false
         );
-        collection.forEach((item) => {
-            PetPanel.currentPanel?.spawnPet(item);
-        });
-        await storeCollectionAsMemento(context, collection);
-    } else {
-        var collection = PetSpecification.collectionFromMemento(
-            context,
-            getConfiguredSize(),
+    </script>
+</body>
+</html>`;
+}
+
+// ---------------------------------------------------------------------------
+// NybblePanel (standalone webview panel)
+// ---------------------------------------------------------------------------
+
+class NybblePanel {
+    public static currentPanel: NybblePanel | undefined;
+    public static readonly viewType = 'nybblePanel';
+
+    private readonly _panel: vscode.WebviewPanel;
+    private readonly _context: vscode.ExtensionContext;
+    private readonly _disposables: vscode.Disposable[] = [];
+
+    public static createOrShow(context: vscode.ExtensionContext): void {
+        const column = vscode.window.activeTextEditor?.viewColumn;
+        if (NybblePanel.currentPanel) {
+            NybblePanel.currentPanel._panel.reveal(column);
+            return;
+        }
+        const panel = vscode.window.createWebviewPanel(
+            NybblePanel.viewType,
+            'Nybble',
+            vscode.ViewColumn.Two,
+            getWebviewOptions(context.extensionUri),
         );
-        collection.push(spec);
-        await storeCollectionAsMemento(context, collection);
+        NybblePanel.currentPanel = new NybblePanel(panel, context);
+    }
+
+    public static revive(panel: vscode.WebviewPanel, context: vscode.ExtensionContext): void {
+        NybblePanel.currentPanel = new NybblePanel(panel, context);
+    }
+
+    private constructor(panel: vscode.WebviewPanel, context: vscode.ExtensionContext) {
+        this._panel  = panel;
+        this._context = context;
+
+        this._panel.webview.html = getHtmlForWebview(panel.webview, context.extensionUri);
+
+        this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
+        this._panel.webview.onDidReceiveMessage(
+            (msg: FromWebviewMessage) => handleWebviewMessage(msg, context),
+            null,
+            this._disposables,
+        );
+
+        // Push initial state after the webview has loaded
+        setTimeout(() => {
+            broadcastState();
+            postToWebview({ type: 'inventoryUpdate', inventory });
+            postToWebview({ type: 'habitatUpdate', habitat });
+        }, 500);
+    }
+
+    public getWebview(): vscode.Webview {
+        return this._panel.webview;
+    }
+
+    public dispose(): void {
+        NybblePanel.currentPanel = undefined;
+        this._panel.dispose();
+        while (this._disposables.length) {
+            this._disposables.pop()?.dispose();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NybbleWebviewViewProvider (Explorer sidebar view)
+// ---------------------------------------------------------------------------
+
+class NybbleWebviewViewProvider implements vscode.WebviewViewProvider {
+    public static readonly viewType = 'nybbleView';
+    private _view?: vscode.WebviewView;
+
+    constructor(private readonly _context: vscode.ExtensionContext) {}
+
+    resolveWebviewView(webviewView: vscode.WebviewView): void {
+        this._view = webviewView;
+        webviewView.webview.options = getWebviewOptions(this._context.extensionUri);
+        webviewView.webview.html = getHtmlForWebview(webviewView.webview, this._context.extensionUri);
+
+        webviewView.webview.onDidReceiveMessage(
+            (msg: FromWebviewMessage) => handleWebviewMessage(msg, this._context),
+        );
+
+        setTimeout(() => {
+            broadcastState();
+            postToWebview({ type: 'inventoryUpdate', inventory });
+            postToWebview({ type: 'habitatUpdate', habitat });
+        }, 500);
+    }
+
+    getWebview(): vscode.Webview | undefined {
+        return this._view?.webview;
     }
 }
