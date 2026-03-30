@@ -1,0 +1,346 @@
+/* ============================================================
+   Nybble — webview styles
+   Canvas layer: #petCanvasContainer (background, foreground, ball)
+   Critter layer: #petsContainer (emoji pet img + collision + bubble)
+   UI overlay:   #statPanel (top), #inventoryPanel (bottom)
+   ============================================================ */
+
+:root {
+    --nybble-bg:          rgba(0, 0, 0, 0.55);
+    --nybble-border:      rgba(255, 255, 255, 0.12);
+    --nybble-text:        #e8e8e8;
+    --nybble-text-dim:    #999;
+    --nybble-accent:      #7ec8e3;
+    --nybble-radius:      8px;
+    --nybble-font:        'silkscreen', 'Courier New', monospace;
+
+    /* Stat colours */
+    --col-hunger:      #f4a942;
+    --col-happiness:   #6cca78;
+    --col-energy:      #5ba8e5;
+    --col-cleanliness: #c27ae0;
+}
+
+/* ── Layout ── */
+
+body {
+    font-family: var(--nybble-font);
+    font-size: 11px;
+    color: var(--nybble-text);
+    background: transparent;
+    position: relative;
+}
+
+#background,
+#foreground {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background-repeat: repeat-x;
+    background-position: bottom;
+    background-size: auto 100%;
+    pointer-events: none;
+    z-index: 0;
+}
+#foreground { z-index: 2; }
+
+#petCanvasContainer {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 3;
+}
+
+#petCanvasContainer canvas {
+    position: absolute;
+    top: 0; left: 0;
+}
+
+/* ballCanvas gets pointer events so throws work */
+#ballCanvas { pointer-events: auto; z-index: 3; }
+#foregroundEffectCanvas { z-index: 4; pointer-events: none; }
+#backgroundEffectCanvas { z-index: 1; pointer-events: none; }
+
+#petsContainer {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 5;
+}
+
+/* ── Pet sprite (emoji img) ── */
+
+.pet {
+    position: absolute;
+    image-rendering: pixelated;
+    /* emoji SVGs look better with crisp rendering */
+    image-rendering: crisp-edges;
+    pointer-events: none;
+    /* gentle idle bob */
+    animation: petBob 2.4s ease-in-out infinite;
+}
+
+.pet.walking { animation: petWalk 0.5s steps(2) infinite; }
+.pet.running { animation: petRun 0.25s steps(2) infinite; }
+
+@keyframes petBob {
+    0%, 100% { transform: translateY(0)    scaleX(var(--face-dir, 1)); }
+    50%       { transform: translateY(-3px) scaleX(var(--face-dir, 1)); }
+}
+@keyframes petWalk {
+    0%   { transform: translateY(0)    scaleX(var(--face-dir, 1)); }
+    100% { transform: translateY(-2px) scaleX(var(--face-dir, 1)); }
+}
+@keyframes petRun {
+    0%   { transform: translateY(0)    scaleX(var(--face-dir, 1)) rotate(-5deg); }
+    100% { transform: translateY(-4px) scaleX(var(--face-dir, 1)) rotate(5deg); }
+}
+
+/* ── Collision div (mouse target) ── */
+
+.collision {
+    position: absolute;
+    pointer-events: auto;
+    cursor: pointer;
+    z-index: 6;
+}
+
+/* ── Speech bubble ── */
+
+.bubble {
+    position: absolute;
+    background: var(--nybble-bg);
+    border: 1px solid var(--nybble-border);
+    border-radius: var(--nybble-radius);
+    padding: 4px 8px;
+    font-family: var(--nybble-font);
+    font-size: 11px;
+    color: var(--nybble-text);
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 10;
+    display: none;
+    backdrop-filter: blur(4px);
+}
+
+.bubble::after {
+    content: '';
+    position: absolute;
+    bottom: -7px;
+    left: 12px;
+    border: 4px solid transparent;
+    border-top-color: var(--nybble-border);
+}
+
+.bubble-nano  { font-size: 9px;  padding: 2px 6px; }
+.bubble-small { font-size: 10px; padding: 3px 6px; }
+.bubble-medium, .bubble-large { font-size: 11px; }
+
+/* ── Stat panel (top overlay) ── */
+
+#statPanel {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    padding: 8px 10px 6px;
+    background: var(--nybble-bg);
+    border-bottom: 1px solid var(--nybble-border);
+    backdrop-filter: blur(6px);
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+#critterInfo {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 2px;
+}
+
+#critterName {
+    font-size: 12px;
+    font-weight: bold;
+    color: var(--nybble-accent);
+    letter-spacing: 0.5px;
+}
+
+#critterLevel {
+    font-size: 10px;
+    color: var(--nybble-text-dim);
+    background: rgba(255,255,255,0.08);
+    padding: 1px 5px;
+    border-radius: 4px;
+}
+
+#critterMood {
+    font-size: 13px;
+    margin-left: auto;
+}
+
+.stat-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 14px;
+}
+
+.stat-icon {
+    font-size: 11px;
+    width: 16px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.stat-track {
+    flex: 1;
+    height: 7px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.stat-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.6s ease;
+}
+
+#fill-hunger      { background: var(--col-hunger); }
+#fill-happiness   { background: var(--col-happiness); }
+#fill-energy      { background: var(--col-energy); }
+#fill-cleanliness { background: var(--col-cleanliness); }
+
+/* Flash animation when a stat is critically low */
+.stat-fill.critical {
+    animation: statFlash 1s ease-in-out infinite;
+}
+@keyframes statFlash {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.3; }
+}
+
+/* ── Inventory panel (bottom overlay) ── */
+
+#inventoryPanel {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    padding: 6px 10px 8px;
+    background: var(--nybble-bg);
+    border-top: 1px solid var(--nybble-border);
+    backdrop-filter: blur(6px);
+    z-index: 20;
+}
+
+#inventoryTitle {
+    font-size: 9px;
+    color: var(--nybble-text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 5px;
+}
+
+#inventoryItems {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.inv-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid var(--nybble-border);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+    transition: background 0.15s, transform 0.1s;
+    user-select: none;
+}
+
+.inv-item:hover {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: var(--nybble-accent);
+    transform: translateY(-1px);
+}
+
+.inv-item:active {
+    transform: translateY(0);
+    background: rgba(255, 255, 255, 0.22);
+}
+
+.inv-item.no-feed {
+    /* Furniture/toys — not feedable */
+    cursor: default;
+    opacity: 0.6;
+}
+.inv-item.no-feed:hover {
+    transform: none;
+    border-color: var(--nybble-border);
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.inv-item-icon  { font-size: 14px; }
+.inv-item-count { font-size: 9px; color: var(--nybble-text-dim); }
+
+.inv-empty {
+    color: var(--nybble-text-dim);
+    font-size: 10px;
+    font-style: italic;
+    padding: 2px 0;
+}
+
+/* ── Reward toast ── */
+
+#rewardToast {
+    position: fixed;
+    bottom: 72px;
+    left: 50%;
+    transform: translateX(-50%) translateY(10px);
+    background: rgba(30, 30, 40, 0.9);
+    border: 1px solid var(--nybble-accent);
+    border-radius: 20px;
+    padding: 5px 14px;
+    font-size: 11px;
+    color: var(--nybble-accent);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s, transform 0.3s;
+    z-index: 30;
+    white-space: nowrap;
+}
+
+#rewardToast.visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+/* ── Mood speech bubble (permanent, above critter) ── */
+
+#moodBubble {
+    position: fixed;
+    left: 50%;
+    bottom: 68px;
+    transform: translateX(-50%);
+    background: var(--nybble-bg);
+    border: 1px solid var(--nybble-border);
+    border-radius: var(--nybble-radius);
+    padding: 5px 10px;
+    font-size: 10px;
+    color: var(--nybble-text);
+    pointer-events: none;
+    backdrop-filter: blur(4px);
+    z-index: 15;
+    opacity: 0;
+    transition: opacity 0.4s;
+    max-width: 200px;
+    text-align: center;
+}
+
+#moodBubble.visible {
+    opacity: 1;
+}

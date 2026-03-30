@@ -1,5 +1,14 @@
-// This script will be run within the webview itself
-import { randomName } from '../common/names';
+/**
+ * Nybble webview — main entry point.
+ *
+ * Bundled by webpack → media/main-bundle.js and run inside the VS Code webview.
+ *
+ * Responsibilities:
+ *  - Render the single emoji critter and drive its animation via the existing
+ *    BasePetType state machine.
+ *  - Maintain the stat-bar overlay and inventory panel (DOM, not canvas).
+ *  - Bridge messages between the VS Code extension and the webview UI.
+ */
 import {
     PetSize,
     PetColor,
@@ -9,14 +18,7 @@ import {
     WebviewMessage,
 } from '../common/types';
 import { IPetType } from './states';
-import {
-    createPet,
-    PetCollection,
-    PetElement,
-    IPetCollection,
-    availableColors,
-    InvalidPetException,
-} from './pets';
+import { PetCollection, PetElement, IPetCollection } from './pets';
 import { PetElementState, PetPanelState } from './states';
 import { THEMES } from './themes';
 import {
@@ -25,26 +27,40 @@ import {
     setupBallThrowing,
     throwAndChase,
 } from './ball';
+import { EmojiCritter } from './pets/critter';
 
-const FOREGROUND_EFFECT_CANVAS_ID = 'foregroundEffectCanvas';
-const BACKGROUND_EFFECT_CANVAS_ID = 'backgroundEffectCanvas';
-const PET_CANVAS_ID = 'ballCanvas';
+// ── Canvas IDs ──────────────────────────────────────────────────────────────
 
-/* This is how the VS Code API can be invoked from the panel */
+const PET_CANVAS_ID                = 'ballCanvas';
+const FOREGROUND_EFFECT_CANVAS_ID  = 'foregroundEffectCanvas';
+const BACKGROUND_EFFECT_CANVAS_ID  = 'backgroundEffectCanvas';
+
+// ── VS Code API ─────────────────────────────────────────────────────────────
+
 declare global {
     interface VscodeStateApi {
-        getState(): PetPanelState | undefined; // API is actually Any, but we want it to be typed.
+        getState(): PetPanelState | undefined;
         setState(state: PetPanelState): void;
         postMessage(message: WebviewMessage): void;
     }
     function acquireVsCodeApi(): VscodeStateApi;
 }
 
+let vscodeApi: VscodeStateApi;
+
+function postToExtension(msg: object) {
+    vscodeApi.postMessage(msg as WebviewMessage);
+}
+
+// ── Critter reference ───────────────────────────────────────────────────────
+
 export var allPets: IPetCollection = new PetCollection();
-var petCounter: number;
+let activeCritter: EmojiCritter | undefined;
+
+// ── Mouse swipe handler ─────────────────────────────────────────────────────
 
 function handleMouseOver(e: MouseEvent) {
-    var el = e.currentTarget as HTMLDivElement;
+    const el = e.currentTarget as HTMLDivElement;
     allPets.pets.forEach((element) => {
         if (element.collision === el && element.pet.canSwipe) {
             element.pet.swipe();
@@ -52,403 +68,316 @@ function handleMouseOver(e: MouseEvent) {
     });
 }
 
-function startAnimations(
-    collision: HTMLDivElement,
-    pet: IPetType,
-    stateApi?: VscodeStateApi,
-) {
-    if (!stateApi) {
-        stateApi = acquireVsCodeApi();
-    }
-
+function startAnimations(collision: HTMLDivElement, _pet: IPetType) {
     collision.addEventListener('mouseover', handleMouseOver);
 }
 
-function addPetToPanel(
-    petType: PetType,
-    basePetUri: string,
-    petColor: PetColor,
-    petSize: PetSize,
+// ── Critter initialisation ──────────────────────────────────────────────────
+
+function addCritterToPanel(
+    species: string,
     left: number,
     bottom: number,
     floor: number,
-    name: string,
-    stateApi?: VscodeStateApi,
+    stateApi: VscodeStateApi,
 ): PetElement {
-    var petSpriteElement: HTMLImageElement = document.createElement('img');
-    petSpriteElement.className = 'pet';
-    (document.getElementById('petsContainer') as HTMLDivElement).appendChild(
-        petSpriteElement,
+    const container = document.getElementById('petsContainer') as HTMLDivElement;
+
+    const el = document.createElement('img') as HTMLImageElement;
+    el.className = 'pet';
+    container.appendChild(el);
+
+    const collision = document.createElement('div') as HTMLDivElement;
+    collision.className = 'collision';
+    container.appendChild(collision);
+
+    const speech = document.createElement('div') as HTMLDivElement;
+    speech.className = 'bubble bubble-large';
+    container.appendChild(speech);
+
+    const critter = new EmojiCritter(
+        species,
+        el,
+        collision,
+        speech,
+        PetSize.large,
+        left,
+        bottom,
+        '',        // petRoot — not used for emoji
+        floor,
+        '',        // name comes from stateUpdate
+        3,         // speed (normal)
     );
 
-    var collisionElement: HTMLDivElement = document.createElement('div');
-    collisionElement.className = 'collision';
-    (document.getElementById('petsContainer') as HTMLDivElement).appendChild(
-        collisionElement,
-    );
+    activeCritter = critter;
+    startAnimations(collision, critter);
 
-    var speechBubbleElement: HTMLDivElement = document.createElement('div');
-    speechBubbleElement.className = `bubble bubble-${petSize}`;
-    speechBubbleElement.innerText = 'Hello!';
-    (document.getElementById('petsContainer') as HTMLDivElement).appendChild(
-        speechBubbleElement,
-    );
-
-    const root = basePetUri + '/' + petType + '/' + petColor;
-    console.log('Creating new pet : ', petType, root, petColor, petSize, name);
-    try {
-        if (!availableColors(petType).includes(petColor)) {
-            throw new InvalidPetException('Invalid color for pet type');
-        }
-        var newPet = createPet(
-            petType,
-            petSpriteElement,
-            collisionElement,
-            speechBubbleElement,
-            petSize,
-            left,
-            bottom,
-            root,
-            floor,
-            name,
-        );
-        petCounter++;
-        startAnimations(collisionElement, newPet, stateApi);
-    } catch (e: any) {
-        // Remove elements
-        petSpriteElement.remove();
-        collisionElement.remove();
-        speechBubbleElement.remove();
-        throw e;
-    }
-
-    return new PetElement(
-        petSpriteElement,
-        collisionElement,
-        speechBubbleElement,
-        newPet,
-        petColor,
-        petType,
-    );
+    return new PetElement(el, collision, speech, critter, PetColor.brown, PetType.cat);
 }
 
-export function saveState(stateApi?: VscodeStateApi) {
-    if (!stateApi) {
-        stateApi = acquireVsCodeApi();
-    }
-    var state = new PetPanelState();
-    state.petStates = new Array();
-
-    allPets.pets.forEach((petItem) => {
-        state.petStates?.push({
-            petName: petItem.pet.name,
-            petColor: petItem.color,
-            petType: petItem.type,
-            petState: petItem.pet.getState(),
-            petFriend: petItem.pet.friend?.name ?? undefined,
-            elLeft: petItem.el.style.left,
-            elBottom: petItem.el.style.bottom,
-        });
-    });
-    state.petCounter = petCounter;
-    stateApi?.setState(state);
-}
-
-function recoverState(
-    basePetUri: string,
-    petSize: PetSize,
-    floor: number,
-    stateApi?: VscodeStateApi,
-) {
-    if (!stateApi) {
-        stateApi = acquireVsCodeApi();
-    }
-    var state = stateApi?.getState();
-    if (!state) {
-        petCounter = 1;
-    } else {
-        if (state.petCounter === undefined || isNaN(state.petCounter)) {
-            petCounter = 1;
-        } else {
-            petCounter = state.petCounter ?? 1;
-        }
-    }
-
-    var recoveryMap: Map<IPetType, PetElementState> = new Map();
-    state?.petStates?.forEach((p) => {
-        // Fixes a bug related to duck animations
-        if ((p.petType as string) === 'rubber duck') {
-            (p.petType as string) = 'rubber-duck';
-        }
-
-        try {
-            var newPet = addPetToPanel(
-                p.petType ?? PetType.cat,
-                basePetUri,
-                p.petColor ?? PetColor.brown,
-                petSize,
-                parseInt(p.elLeft ?? '0'),
-                parseInt(p.elBottom ?? '0'),
-                floor,
-                p.petName ?? randomName(p.petType ?? PetType.cat),
-                stateApi,
-            );
-            allPets.push(newPet);
-            recoveryMap.set(newPet.pet, p);
-        } catch (InvalidPetException) {
-            console.log(
-                'State had invalid pet (' + p.petType + '), discarding.',
-            );
-        }
-    });
-    recoveryMap.forEach((state, pet) => {
-        // Recover previous state.
-        if (state.petState !== undefined) {
-            pet.recoverState(state.petState);
-        }
-
-        // Resolve friend relationships
-        var friend = undefined;
-        if (state.petFriend) {
-            friend = allPets.locate(state.petFriend);
-            if (friend) {
-                pet.recoverFriend(friend.pet);
-            }
-        }
-    });
-}
-
-function randomStartPosition(): number {
-    return Math.floor(Math.random() * (window.innerWidth * 0.7));
-}
+// ── Canvas helpers ──────────────────────────────────────────────────────────
 
 function initCanvas(name: string): HTMLCanvasElement | null {
     const canvas = document.getElementById(name) as HTMLCanvasElement;
-    if (!canvas) {
-        console.log('Canvas not ready');
-        return null;
-    }
-    const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
-    if (!ctx) {
-        console.log('Canvas context not ready');
-        return null;
-    }
-    ctx.canvas.width = window.innerWidth;
+    if (!canvas) { return null; }
+    const ctx = canvas.getContext('2d');
+    if (!ctx)   { return null; }
+    ctx.canvas.width  = window.innerWidth;
     ctx.canvas.height = window.innerHeight;
     return canvas;
 }
 
-// It cannot access the main VS Code APIs directly.
+function randomStartPosition(): number {
+    return Math.floor(Math.random() * (window.innerWidth * 0.6));
+}
+
+// ── Stat bar UI ─────────────────────────────────────────────────────────────
+
+const STAT_IDS: Array<{ key: string; icon: string; fillId: string }> = [
+    { key: 'hunger',      icon: '🍖', fillId: 'fill-hunger' },
+    { key: 'happiness',   icon: '😊', fillId: 'fill-happiness' },
+    { key: 'energy',      icon: '⚡', fillId: 'fill-energy' },
+    { key: 'cleanliness', icon: '🛁', fillId: 'fill-cleanliness' },
+];
+
+function updateStatBar(fillId: string, value: number) {
+    const el = document.getElementById(fillId);
+    if (!el) { return; }
+    el.style.width = `${Math.max(0, Math.min(100, value))}%`;
+    el.classList.toggle('critical', value < 20);
+}
+
+interface CritterStateMsg {
+    name:       string;
+    level:      number;
+    hunger:     number;
+    happiness:  number;
+    energy:     number;
+    cleanliness: number;
+}
+
+function handleStateUpdate(state: CritterStateMsg, mood: string, dialogue: string) {
+    // Stat bars
+    updateStatBar('fill-hunger',      state.hunger);
+    updateStatBar('fill-happiness',   state.happiness);
+    updateStatBar('fill-energy',      state.energy);
+    updateStatBar('fill-cleanliness', state.cleanliness);
+
+    // Critter info
+    const nameEl  = document.getElementById('critterName');
+    const levelEl = document.getElementById('critterLevel');
+    const moodEl  = document.getElementById('critterMood');
+    if (nameEl)  { nameEl.textContent  = state.name || 'Your Critter'; }
+    if (levelEl) { levelEl.textContent = `Lv.${state.level}`; }
+    if (moodEl)  { moodEl.textContent  = moodEmoji(mood); }
+
+    // Update critter's displayed emoji
+    activeCritter?.updateMood(mood);
+
+    // Mood speech bubble
+    showMoodBubble(dialogue);
+}
+
+function moodEmoji(mood: string): string {
+    const map: Record<string, string> = {
+        ecstatic: '🤩', happy: '😊', content: '😐',
+        sad: '😢', hungry: '😤', tired: '😴',
+        dirty: '🤢', miserable: '😭', sleeping: '😴',
+    };
+    return map[mood] ?? '😐';
+}
+
+// ── Mood speech bubble ───────────────────────────────────────────────────────
+
+let moodBubbleTimer: ReturnType<typeof setTimeout> | undefined;
+
+function showMoodBubble(text: string) {
+    const el = document.getElementById('moodBubble');
+    if (!el) { return; }
+    el.textContent = text;
+    el.classList.add('visible');
+    if (moodBubbleTimer) { clearTimeout(moodBubbleTimer); }
+    moodBubbleTimer = setTimeout(() => {
+        el.classList.remove('visible');
+    }, 5000);
+}
+
+// ── Inventory UI ─────────────────────────────────────────────────────────────
+
+interface InventorySlot { itemId: string; quantity: number; }
+interface InventoryMsg  { slots: InventorySlot[]; coins: number; }
+
+const ITEM_DEFS: Record<string, { name: string; icon: string; category: string }> = {
+    basic_food:  { name: 'Kibble',      icon: '🍖', category: 'food'      },
+    mega_meal:   { name: 'Mega Meal',   icon: '🍱', category: 'food'      },
+    snack:       { name: 'Snack',       icon: '🍪', category: 'food'      },
+    treat:       { name: 'Treat',       icon: '⭐', category: 'treat'     },
+    ball:        { name: 'Ball',        icon: '🔴', category: 'toy'       },
+    bed:         { name: 'Bed',         icon: '🛏️', category: 'furniture' },
+    food_bowl:   { name: 'Food Bowl',   icon: '🥣', category: 'furniture' },
+    toy_box:     { name: 'Toy Box',     icon: '📦', category: 'furniture' },
+    plant:       { name: 'Plant',       icon: '🪴', category: 'furniture' },
+    window:      { name: 'Window',      icon: '🪟', category: 'furniture' },
+};
+
+const FEEDABLE_CATEGORIES = new Set(['food', 'treat']);
+
+function handleInventoryUpdate(inv: InventoryMsg) {
+    const container = document.getElementById('inventoryItems');
+    if (!container) { return; }
+
+    if (!inv.slots.length) {
+        container.innerHTML = `<span class="inv-empty">No items yet — save some files!</span>`;
+        return;
+    }
+
+    container.innerHTML = '';
+    inv.slots.forEach((slot) => {
+        if (slot.quantity <= 0) { return; }
+        const def = ITEM_DEFS[slot.itemId];
+        if (!def) { return; }
+
+        const feedable = FEEDABLE_CATEGORIES.has(def.category);
+        const div = document.createElement('div');
+        div.className = `inv-item${feedable ? '' : ' no-feed'}`;
+        div.dataset['itemId'] = slot.itemId;
+        div.title = feedable ? `Click to feed ${def.name}` : def.name;
+        div.innerHTML = [
+            `<span class="inv-item-icon">${def.icon}</span>`,
+            `<span class="inv-item-name">${def.name}</span>`,
+            `<span class="inv-item-count">×${slot.quantity}</span>`,
+        ].join('');
+
+        if (feedable) {
+            div.addEventListener('click', () => {
+                postToExtension({ type: 'feedCritter', itemId: slot.itemId });
+            });
+        }
+        container.appendChild(div);
+    });
+}
+
+// ── Reward toast ──────────────────────────────────────────────────────────────
+
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+function showRewardToast(text: string) {
+    const el = document.getElementById('rewardToast');
+    if (!el) { return; }
+    el.textContent = text;
+    el.classList.add('visible');
+    if (toastTimer) { clearTimeout(toastTimer); }
+    toastTimer = setTimeout(() => el.classList.remove('visible'), 3500);
+}
+
+// ── Main app entry point ──────────────────────────────────────────────────────
+
 export function petPanelApp(
     basePetUri: string,
     theme: Theme,
     themeKind: ColorThemeKind,
-    petColor: PetColor,
-    petSize: PetSize,
-    petType: PetType,
+    critterSpecies: string,   // e.g. 'cat', 'dog', 'bunny'
+    _petSize: PetSize,        // unused — critter is always 'large' for emoji
+    _petType: PetType,        // unused — kept for API compat
     throwBallWithMouse: boolean,
     disableEffects: boolean,
     stateApi?: VscodeStateApi,
 ) {
-    if (!stateApi) {
-        stateApi = acquireVsCodeApi();
-    }
-    const themeInfo = THEMES[theme];
-    // Apply Theme backgrounds
-    const foregroundEl = document.getElementById('foreground');
-    const backgroundEl = document.getElementById('background');
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    backgroundEl!.style.backgroundImage = themeInfo.backgroundImageUrl(
-        basePetUri,
-        themeKind,
-        petSize,
-    );
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    foregroundEl!.style.backgroundImage = themeInfo.foregroundImageUrl(
-        basePetUri,
-        themeKind,
-        petSize,
-    );
-    const floor = themeInfo.floor(petSize);
+    vscodeApi = stateApi ?? acquireVsCodeApi();
 
-    console.log(
-        'Starting pet session',
-        petColor,
-        basePetUri,
-        petType,
-        throwBallWithMouse,
-        theme,
+    // ── Theme backgrounds ──────────────────────────────────────────────────
+    const themeInfo  = THEMES[theme];
+    const floor      = themeInfo.floor(PetSize.large);
+
+    const bgEl = document.getElementById('background');
+    const fgEl = document.getElementById('foreground');
+    if (bgEl) { bgEl.style.backgroundImage = themeInfo.backgroundImageUrl(basePetUri, themeKind, PetSize.large); }
+    if (fgEl) { fgEl.style.backgroundImage = themeInfo.foregroundImageUrl(basePetUri, themeKind, PetSize.large); }
+
+    // ── Spawn the critter ──────────────────────────────────────────────────
+    const critterEl = addCritterToPanel(
+        critterSpecies,
+        randomStartPosition(),
+        floor,
+        floor,
+        vscodeApi,
     );
+    allPets.push(critterEl);
 
-    // New session
-    var state = stateApi?.getState();
-    if (!state) {
-        console.log('No state, starting a new session.');
-        petCounter = 1;
-        allPets.push(
-            addPetToPanel(
-                petType,
-                basePetUri,
-                petColor,
-                petSize,
-                randomStartPosition(),
-                floor,
-                floor,
-                randomName(petType),
-                stateApi,
-            ),
-        );
-        saveState(stateApi);
-    } else {
-        console.log('Recovering state - ', state);
-        recoverState(basePetUri, petSize, floor, stateApi);
-    }
-
+    // ── Canvas + ball throwing ─────────────────────────────────────────────
     initCanvas(PET_CANVAS_ID);
-    setupBallThrowing(PET_CANVAS_ID, petSize, floor);
-
+    setupBallThrowing(PET_CANVAS_ID, PetSize.large, floor);
     if (throwBallWithMouse) {
         dynamicThrowOn(allPets.pets);
     } else {
         dynamicThrowOff();
     }
 
-    // Initialize any effects
+    // ── Theme effects ──────────────────────────────────────────────────────
     if (themeInfo.effect) {
-        const foregroundEffectCanvas = initCanvas(FOREGROUND_EFFECT_CANVAS_ID);
-        const backgroundEffectCanvas = initCanvas(BACKGROUND_EFFECT_CANVAS_ID);
-        if (foregroundEffectCanvas && backgroundEffectCanvas) {
-            themeInfo.effect.init(
-                foregroundEffectCanvas,
-                backgroundEffectCanvas,
-                petSize,
-                floor,
-                themeKind,
-            );
-            if (!disableEffects) {
-                themeInfo.effect.enable();
-            }
+        const fgCanvas = initCanvas(FOREGROUND_EFFECT_CANVAS_ID);
+        const bgCanvas = initCanvas(BACKGROUND_EFFECT_CANVAS_ID);
+        if (fgCanvas && bgCanvas) {
+            themeInfo.effect.init(fgCanvas, bgCanvas, PetSize.large, floor, themeKind);
+            if (!disableEffects) { themeInfo.effect.enable(); }
         }
     }
 
+    // ── Animation loop (driven by 'tick' messages from extension) ──────────
     let windowLoaded = false;
     const onTick = () => {
-        if (windowLoaded) {
-            allPets.seekNewFriends();
-            allPets.pets.forEach((petItem) => {
-                petItem.pet.nextFrame();
-            });
-            saveState(stateApi);
-        }
+        if (!windowLoaded) { return; }
+        allPets.pets.forEach((p) => p.pet.nextFrame());
     };
+    window.addEventListener('load', () => { windowLoaded = true; });
 
-    window.addEventListener('load', () => {
-        windowLoaded = true;
-    });
-
-    // Handle messages sent from the extension to the webview
+    // ── Message handler ────────────────────────────────────────────────────
     window.addEventListener('message', (event): void => {
-        const message = event.data; // The json data that the extension sent
+        const message = event.data;
+
+        // New typed protocol (extension → webview)
+        if (message.type) {
+            switch (message.type) {
+                case 'stateUpdate':
+                    handleStateUpdate(message.state, message.mood, message.dialogue);
+                    return;
+                case 'inventoryUpdate':
+                    handleInventoryUpdate(message.inventory);
+                    return;
+                case 'habitatUpdate':
+                    // Phase 3 — grid rendering
+                    return;
+            }
+        }
+
+        // Legacy command protocol
         switch (message.command) {
             case 'throw-with-mouse':
-                if (message.enabled) {
-                    dynamicThrowOn(allPets.pets);
-                } else {
-                    dynamicThrowOff();
-                }
+                if (message.enabled) { dynamicThrowOn(allPets.pets); }
+                else                 { dynamicThrowOff(); }
                 break;
+
             case 'throw-ball':
                 throwAndChase(allPets.pets);
                 break;
-            case 'spawn-pet':
-                allPets.push(
-                    addPetToPanel(
-                        message.type,
-                        basePetUri,
-                        message.color,
-                        petSize,
-                        randomStartPosition(),
-                        floor,
-                        floor,
-                        message.name ?? randomName(message.type),
-                        stateApi,
-                    ),
-                );
-                saveState(stateApi);
-                break;
 
-            case 'list-pets':
-                var pets = allPets.pets;
-                stateApi?.postMessage({
-                    command: 'list-pets',
-                    text: pets
-                        .map(
-                            (pet) => `${pet.type},${pet.pet.name},${pet.color}`,
-                        )
-                        .join('\n'),
-                });
-                break;
-
-            case 'roll-call':
-                var pets = allPets.pets;
-                // go through every single
-                // pet and then print out their name
-                pets.forEach((pet) => {
-                    stateApi?.postMessage({
-                        command: 'info',
-                        text: `${pet.pet.emoji} ${pet.pet.name} (${pet.color} ${pet.type}): ${pet.pet.hello}`,
-                    });
-                });
-            case 'delete-pet':
-                var pet = allPets.locatePet(
-                    message.name,
-                    message.type,
-                    message.color,
-                );
-                if (pet) {
-                    allPets.remove(pet);
-                    saveState(stateApi);
-                    stateApi?.postMessage({
-                        command: 'info',
-                        text: '👋 Removed pet ' + message.name,
-                    });
-                } else {
-                    stateApi?.postMessage({
-                        command: 'error',
-                        text: `Could not find pet ${message.name}`,
-                    });
-                }
-                break;
-            case 'reset-pet':
-                allPets.reset();
-                petCounter = 0;
-                saveState(stateApi);
-                break;
-            case 'pause-pet':
-                petCounter = 1;
-                saveState(stateApi);
-                break;
-            case 'disable-effects':
-                if (themeInfo.effect && message.disabled) {
-                    themeInfo.effect.disable();
-                } else if (themeInfo.effect && !message.disabled) {
-                    themeInfo.effect.enable();
-                }
-                break;
             case 'tick':
                 onTick();
+                break;
+
+            case 'disable-effects':
+                if (themeInfo.effect) {
+                    message.disabled ? themeInfo.effect.disable() : themeInfo.effect.enable();
+                }
                 break;
         }
     });
 
-    window.addEventListener('resize', function () {
+    // ── Resize ─────────────────────────────────────────────────────────────
+    window.addEventListener('resize', () => {
         initCanvas(PET_CANVAS_ID);
         initCanvas(FOREGROUND_EFFECT_CANVAS_ID);
         initCanvas(BACKGROUND_EFFECT_CANVAS_ID);
-
-        // If current theme has an effect, handle resize
-        if (themeInfo.effect) {
-            themeInfo.effect.handleResize();
-        }
+        if (themeInfo.effect) { themeInfo.effect.handleResize(); }
     });
 }
