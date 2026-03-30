@@ -10,22 +10,22 @@
     --nybble-border:      rgba(255, 255, 255, 0.12);
     --nybble-text:        #e8e8e8;
     --nybble-text-dim:    #999;
-    --nybble-accent:      #7ec8e3;
-    --nybble-radius:      8px;
-    --nybble-font:        'silkscreen', 'Courier New', monospace;
+    --nybble-accent:      #e07ab8;
+    --nybble-radius:      14px;
+    --nybble-font:        system-ui, -apple-system, 'Segoe UI', sans-serif;
 
-    /* Stat colours */
-    --col-hunger:      #f4a942;
-    --col-happiness:   #6cca78;
-    --col-energy:      #5ba8e5;
-    --col-cleanliness: #c27ae0;
+    /* Stat colours — soft pastels */
+    --col-hunger:      #ffaa7a;
+    --col-happiness:   #88d8a0;
+    --col-energy:      #88c8f4;
+    --col-cleanliness: #d0a0f0;
 }
 
 /* ── Layout ── */
 
 body {
     font-family: var(--nybble-font);
-    font-size: 11px;
+    font-size: 12px;
     color: var(--nybble-text);
     background: transparent;
     position: relative;
@@ -112,17 +112,18 @@ body {
 .bubble {
     position: absolute;
     background: var(--nybble-bg);
-    border: 1px solid var(--nybble-border);
+    border: 1.5px solid var(--nybble-border);
     border-radius: var(--nybble-radius);
-    padding: 4px 8px;
+    padding: 5px 10px;
     font-family: var(--nybble-font);
-    font-size: 11px;
+    font-size: 12px;
     color: var(--nybble-text);
     white-space: nowrap;
     pointer-events: none;
     z-index: 10;
     display: none;
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(6px);
+    box-shadow: 0 2px 8px rgba(200, 120, 180, 0.15);
 }
 
 .bubble::after {
@@ -134,23 +135,24 @@ body {
     border-top-color: var(--nybble-border);
 }
 
-.bubble-nano  { font-size: 9px;  padding: 2px 6px; }
-.bubble-small { font-size: 10px; padding: 3px 6px; }
-.bubble-medium, .bubble-large { font-size: 11px; }
+.bubble-nano  { font-size: 10px; padding: 3px 7px; }
+.bubble-small { font-size: 11px; padding: 4px 8px; }
+.bubble-medium, .bubble-large { font-size: 12px; }
 
 /* ── Stat panel (top overlay) ── */
 
 #statPanel {
     position: fixed;
     top: 0; left: 0; right: 0;
-    padding: 8px 10px 6px;
+    padding: 10px 12px 8px;
     background: var(--nybble-bg);
-    border-bottom: 1px solid var(--nybble-border);
-    backdrop-filter: blur(6px);
+    border-bottom: 1.5px solid var(--nybble-border);
+    backdrop-filter: blur(8px);
     z-index: 20;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 5px;
+    box-shadow: 0 2px 12px rgba(200, 120, 180, 0.12);
 }
 
 #critterInfo {
@@ -161,18 +163,19 @@ body {
 }
 
 #critterName {
-    font-size: 12px;
-    font-weight: bold;
+    font-size: 13px;
+    font-weight: 700;
     color: var(--nybble-accent);
-    letter-spacing: 0.5px;
+    letter-spacing: 0.3px;
 }
 
 #critterLevel {
     font-size: 10px;
-    color: var(--nybble-text-dim);
-    background: rgba(255,255,255,0.08);
-    padding: 1px 5px;
-    border-radius: 4px;
+    color: var(--nybble-accent);
+    background: rgba(224, 122, 184, 0.18);
+    padding: 2px 6px;
+    border-radius: 10px;
+    border: 1px solid rgba(224, 122, 184, 0.3);
 }
 
 #critterMood {
@@ -198,7 +201,7 @@ body {
     flex: 1;
     height: 7px;
     background: rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
+    border-radius: 6px;
     overflow: hidden;
 }
 
@@ -229,10 +232,11 @@ body {
     bottom: 0; left: 0; right: 0;
     padding: 0;
     background: var(--nybble-bg);
-    border-top: 1px solid var(--nybble-border);
-    backdrop-filter: blur(6px);
+    border-top: 1.5px solid var(--nybble-border);
+    backdrop-filter: blur(8px);
     z-index: 20;
     transition: transform 0.25s ease;
+    box-shadow: 0 -2px 12px rgba(200, 120, 180, 0.12);
 }
 
 /* Collapsed: slide everything except the header off-screen */
@@ -260,10 +264,9 @@ body {
 }
 
 #inventoryTitle {
-    font-size: 9px;
+    font-size: 10px;
     color: var(--nybble-text-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    letter-spacing: 0.5px;
     flex: 1;
 }
 
@@ -289,20 +292,22 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 4px 8px;
+    padding: 5px 10px;
     background: rgba(255, 255, 255, 0.07);
-    border: 1px solid var(--nybble-border);
-    border-radius: 6px;
+    border: 1.5px solid var(--nybble-border);
+    border-radius: 20px;
     cursor: pointer;
-    font-size: 11px;
-    transition: background 0.15s, transform 0.1s;
+    font-size: 12px;
+    transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
     user-select: none;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
 .inv-item:hover {
     background: rgba(255, 255, 255, 0.15);
     border-color: var(--nybble-accent);
-    transform: translateY(-1px);
+    transform: translateY(-2px);
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
 }
 
 .inv-item:active {
@@ -313,12 +318,13 @@ body {
 .inv-item.no-feed {
     /* Furniture/toys — not feedable */
     cursor: default;
-    opacity: 0.6;
+    opacity: 0.65;
 }
 .inv-item.no-feed:hover {
     transform: none;
     border-color: var(--nybble-border);
     background: rgba(255, 255, 255, 0.07);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
 .inv-item-icon  { font-size: 14px; }
@@ -338,17 +344,18 @@ body {
     bottom: 72px;
     left: 50%;
     transform: translateX(-50%) translateY(10px);
-    background: rgba(30, 30, 40, 0.9);
-    border: 1px solid var(--nybble-accent);
+    background: rgba(20, 15, 25, 0.92);
+    border: 1.5px solid var(--nybble-accent);
     border-radius: 20px;
-    padding: 5px 14px;
-    font-size: 11px;
+    padding: 6px 16px;
+    font-size: 12px;
     color: var(--nybble-accent);
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.3s, transform 0.3s;
     z-index: 30;
     white-space: nowrap;
+    box-shadow: 0 4px 16px rgba(200, 120, 180, 0.2);
 }
 
 #rewardToast.visible {
@@ -364,18 +371,19 @@ body {
     bottom: 68px;
     transform: translateX(-50%);
     background: var(--nybble-bg);
-    border: 1px solid var(--nybble-border);
+    border: 1.5px solid var(--nybble-border);
     border-radius: var(--nybble-radius);
-    padding: 5px 10px;
-    font-size: 10px;
+    padding: 6px 12px;
+    font-size: 11px;
     color: var(--nybble-text);
     pointer-events: none;
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(6px);
     z-index: 15;
     opacity: 0;
     transition: opacity 0.4s;
     max-width: 200px;
     text-align: center;
+    box-shadow: 0 2px 10px rgba(200, 120, 180, 0.15);
 }
 
 #moodBubble.visible {
