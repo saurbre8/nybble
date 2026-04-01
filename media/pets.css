@@ -139,9 +139,9 @@ body {
 .bubble-small { font-size: 11px; padding: 4px 8px; }
 .bubble-medium, .bubble-large { font-size: 12px; }
 
-/* ── Stat panel (top overlay) ── */
+/* ── Top panel (stats + inventory stacked) ── */
 
-#statPanel {
+#topPanel {
     position: fixed;
     top: 0; left: 0; right: 0;
     padding: 10px 12px 8px;
@@ -149,6 +149,10 @@ body {
     border-bottom: 1.5px solid var(--nybble-border);
     backdrop-filter: blur(8px);
     z-index: 20;
+}
+
+#statPanel {
+    padding: 8px 10px 6px;
     display: flex;
     flex-direction: column;
     gap: 5px;
@@ -225,11 +229,9 @@ body {
     50%       { opacity: 0.3; }
 }
 
-/* ── Inventory panel (bottom overlay) ── */
+/* ── Inventory panel (below stat panel, collapsible) ── */
 
 #inventoryPanel {
-    position: fixed;
-    bottom: 0; left: 0; right: 0;
     padding: 0;
     background: var(--nybble-bg);
     border-top: 1.5px solid var(--nybble-border);
@@ -278,7 +280,7 @@ body {
 }
 
 #inventoryPanel.collapsed #inventoryChevron {
-    transform: rotate(180deg);
+    transform: rotate(-180deg);
 }
 
 #inventoryItems {
@@ -341,7 +343,7 @@ body {
 
 #rewardToast {
     position: fixed;
-    bottom: 72px;
+    bottom: 16px;
     left: 50%;
     transform: translateX(-50%) translateY(10px);
     background: rgba(20, 15, 25, 0.92);
@@ -368,7 +370,7 @@ body {
 #moodBubble {
     position: fixed;
     left: 50%;
-    bottom: 68px;
+    bottom: 12px;
     transform: translateX(-50%);
     background: var(--nybble-bg);
     border: 1.5px solid var(--nybble-border);

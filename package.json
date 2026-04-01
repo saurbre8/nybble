@@ -105,6 +105,11 @@
                 "command": "nybble.resetCritter",
                 "title": "Reset Critter (Debug)",
                 "category": "Nybble"
+            },
+            {
+                "command": "nybble.changeTheme",
+                "title": "Change Background Theme",
+                "category": "Nybble"
             }
         ],
         "configuration": [
