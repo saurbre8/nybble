@@ -20,7 +20,6 @@ import {
     removeItem,
     getQuantity,
     ITEMS,
-    rewardForSave,
     rewardForLines,
     rewardForFixingErrors,
     milestoneReward,
@@ -40,7 +39,7 @@ import {
 const KEY_STATE     = 'nybble.state';
 const KEY_INVENTORY = 'nybble.inventory';
 const KEY_HABITAT   = 'nybble.habitat';
-const KEY_SAVES     = 'nybble.sessionSaves';
+const KEY_LOC       = 'nybble.sessionLoc';
 
 // ---------------------------------------------------------------------------
 // Config helpers
@@ -140,7 +139,7 @@ function postToWebview(msg: ToWebviewMessage): void {
 let critterState: CritterState;
 let inventory: Inventory;
 let habitat: HabitatGrid;
-let sessionSaves = 0;
+let sessionLoc = 0;
 
 // Lines-written tracking (per document, reset when saved)
 const lineCounters = new Map<string, number>();
@@ -159,14 +158,14 @@ function loadState(context: vscode.ExtensionContext): void {
         ?? createDefaultInventory();
     habitat      = context.globalState.get<HabitatGrid>(KEY_HABITAT)
         ?? createEmptyHabitat();
-    sessionSaves = context.globalState.get<number>(KEY_SAVES, 0);
+    sessionLoc   = context.globalState.get<number>(KEY_LOC, 0);
 }
 
 async function saveState(context: vscode.ExtensionContext): Promise<void> {
     await context.globalState.update(KEY_STATE,     critterState);
     await context.globalState.update(KEY_INVENTORY, inventory);
     await context.globalState.update(KEY_HABITAT,   habitat);
-    await context.globalState.update(KEY_SAVES,     sessionSaves);
+    await context.globalState.update(KEY_LOC,       sessionLoc);
     context.globalState.setKeysForSync([KEY_STATE, KEY_INVENTORY, KEY_HABITAT]);
 }
 
@@ -334,31 +333,12 @@ function handleWebviewMessage(
 // ---------------------------------------------------------------------------
 
 function registerEditorHooks(context: vscode.ExtensionContext): void {
-    // Save → earn food
-    context.subscriptions.push(
-        vscode.workspace.onDidSaveTextDocument(() => {
-            sessionSaves++;
-            applyReward(context, rewardForSave());
-            applyXpReward(context, 5);
-
-            // Milestone drops
-            const milestone = milestoneReward(sessionSaves);
-            if (milestone) {
-                applyReward(context, milestone);
-                void vscode.window.showInformationMessage(
-                    `🏆 Milestone! ${milestone.reason}: +${milestone.quantity} ${ITEMS[milestone.itemId]?.name}`,
-                );
-            }
-        }),
-    );
-
-    // Text changes → count lines written
+    // Text changes → count lines written; every 50 earns food + XP
     context.subscriptions.push(
         vscode.workspace.onDidChangeTextDocument((e) => {
             const uri = e.document.uri.toString();
             let added = 0;
             for (const change of e.contentChanges) {
-                // Count net new lines in this change
                 const newLines = (change.text.match(/\n/g) ?? []).length;
                 const removedLines = change.range.end.line - change.range.start.line;
                 added += Math.max(0, newLines - removedLines);
@@ -367,14 +347,21 @@ function registerEditorHooks(context: vscode.ExtensionContext): void {
                 lineCounters.set(uri, (lineCounters.get(uri) ?? 0) + added);
                 const total = lineCounters.get(uri)!;
 
-                // Award in chunks
+                // Award in 50-line chunks
                 if (total >= 50) {
-                    const reward = rewardForLines(total);
-                    if (reward) {
-                        applyReward(context, reward);
-                        applyXpReward(context, total >= 200 ? 20 : 10);
+                    applyReward(context, rewardForLines());
+                    applyXpReward(context, 5);
+                    lineCounters.set(uri, 0);
+
+                    // Milestone drops based on cumulative session LOC
+                    sessionLoc += 50;
+                    const milestone = milestoneReward(sessionLoc);
+                    if (milestone) {
+                        applyReward(context, milestone);
+                        void vscode.window.showInformationMessage(
+                            `🏆 Milestone! ${milestone.reason}: +${milestone.quantity} ${ITEMS[milestone.itemId]?.name}`,
+                        );
                     }
-                    lineCounters.set(uri, 0); // reset counter
                 }
             }
         }),
@@ -464,7 +451,7 @@ export function activate(context: vscode.ExtensionContext) {
 
             if (foodItems.length === 0) {
                 void vscode.window.showWarningMessage(
-                    'No food in inventory! Save some files to earn kibble.',
+                    'No food in inventory! Write some code to earn kibble.',
                 );
                 return;
             }
@@ -524,7 +511,7 @@ export function activate(context: vscode.ExtensionContext) {
                 critterState = createDefaultCritterState('', getCritterType());
                 inventory    = createDefaultInventory();
                 habitat      = createEmptyHabitat();
-                sessionSaves = 0;
+                sessionLoc   = 0;
                 void saveState(context);
                 broadcastState();
                 postToWebview({ type: 'inventoryUpdate', inventory });
@@ -728,6 +715,16 @@ function getHtmlForWebview(webview: vscode.Webview, extensionUri: vscode.Uri): s
     <!-- Theme backgrounds -->
     <div id="foreground"></div>
     <div id="background"></div>
+
+    <!-- Inventory panel (bottom, collapsible) -->
+    <div id="inventoryPanel">
+        <div id="inventoryHeader">
+            <span id="inventoryToggle">🎒</span>
+            <span id="inventoryTitle">Inventory</span>
+            <span id="inventoryChevron">▲</span>
+        </div>
+        <div id="inventoryItems"><span class="inv-empty">Write code to earn food!</span></div>
+    </div>
 
     <script nonce="${nonce}" src="${scriptUri}"></script>
     <script nonce="${nonce}">
