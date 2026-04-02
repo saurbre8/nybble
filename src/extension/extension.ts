@@ -520,6 +520,35 @@ export function activate(context: vscode.ExtensionContext) {
         }),
     );
 
+    context.subscriptions.push(
+        vscode.commands.registerCommand('nybble.changeTheme', async () => {
+            const themeOptions: vscode.QuickPickItem[] = [
+                { label: '$(circle-slash) None',   description: 'No background',          detail: 'none' },
+                { label: '$(tree) Forest',          description: 'Forest with starry sky', detail: 'forest' },
+                { label: '$(home) Castle',          description: 'Stone castle backdrop',  detail: 'castle' },
+                { label: '$(symbol-color) Beach',   description: 'Beach with starry sky',  detail: 'beach' },
+                { label: '$(snowflake) Winter',     description: 'Snowy winter scene',     detail: 'winter' },
+                { label: '$(leaf) Autumn',          description: 'Autumn with falling leaves', detail: 'autumn' },
+            ];
+
+            const current = getTheme();
+            const picked = await vscode.window.showQuickPick(themeOptions, {
+                placeHolder: `Current theme: ${current} — pick a new background`,
+            });
+            if (!picked || !picked.detail) { return; }
+
+            await vscode.workspace
+                .getConfiguration('nybble')
+                .update('theme', picked.detail, vscode.ConfigurationTarget.Global);
+
+            if (NybblePanel.currentPanel) {
+                NybblePanel.currentPanel.reloadHtml();
+            } else if (webviewViewProvider) {
+                webviewViewProvider.reloadHtml();
+            }
+        }),
+    );
+
     // ----- Webview view provider (Explorer sidebar) ------------------------
 
     webviewViewProvider = new NybbleWebviewViewProvider(context);
@@ -630,28 +659,40 @@ function getHtmlForWebview(webview: vscode.Webview, extensionUri: vscode.Uri): s
     <title>Nybble</title>
 </head>
 <body>
-    <!-- Stat overlay (top) -->
-    <div id="statPanel">
-        <div id="critterInfo">
-            <span id="critterName">...</span>
-            <span id="critterLevel">Lv.1</span>
-            <span id="critterMood">😐</span>
+    <!-- Top overlay (stats + inventory) -->
+    <div id="topPanel">
+        <div id="statPanel">
+            <div id="critterInfo">
+                <span id="critterName">...</span>
+                <span id="critterLevel">Lv.1</span>
+                <span id="critterMood">😐</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-icon">🍖</span>
+                <div class="stat-track"><div class="stat-fill" id="fill-hunger" style="width:80%"></div></div>
+            </div>
+            <div class="stat-row">
+                <span class="stat-icon">😊</span>
+                <div class="stat-track"><div class="stat-fill" id="fill-happiness" style="width:80%"></div></div>
+            </div>
+            <div class="stat-row">
+                <span class="stat-icon">⚡</span>
+                <div class="stat-track"><div class="stat-fill" id="fill-energy" style="width:90%"></div></div>
+            </div>
+            <div class="stat-row">
+                <span class="stat-icon">🛁</span>
+                <div class="stat-track"><div class="stat-fill" id="fill-cleanliness" style="width:100%"></div></div>
+            </div>
         </div>
-        <div class="stat-row">
-            <span class="stat-icon">🍖</span>
-            <div class="stat-track"><div class="stat-fill" id="fill-hunger" style="width:80%"></div></div>
-        </div>
-        <div class="stat-row">
-            <span class="stat-icon">😊</span>
-            <div class="stat-track"><div class="stat-fill" id="fill-happiness" style="width:80%"></div></div>
-        </div>
-        <div class="stat-row">
-            <span class="stat-icon">⚡</span>
-            <div class="stat-track"><div class="stat-fill" id="fill-energy" style="width:90%"></div></div>
-        </div>
-        <div class="stat-row">
-            <span class="stat-icon">🛁</span>
-            <div class="stat-track"><div class="stat-fill" id="fill-cleanliness" style="width:100%"></div></div>
+
+        <!-- Inventory panel (below stats, collapsible) -->
+        <div id="inventoryPanel">
+            <div id="inventoryHeader">
+                <span id="inventoryToggle">🎒</span>
+                <span id="inventoryTitle">Inventory</span>
+                <span id="inventoryChevron">▼</span>
+            </div>
+            <div id="inventoryItems"><span class="inv-empty">Save files to earn food!</span></div>
         </div>
     </div>
 
@@ -759,6 +800,15 @@ class NybblePanel {
         return this._panel.webview;
     }
 
+    public reloadHtml(): void {
+        this._panel.webview.html = getHtmlForWebview(this._panel.webview, this._context.extensionUri);
+        setTimeout(() => {
+            broadcastState();
+            postToWebview({ type: 'inventoryUpdate', inventory });
+            postToWebview({ type: 'habitatUpdate', habitat });
+        }, 500);
+    }
+
     public dispose(): void {
         NybblePanel.currentPanel = undefined;
         this._panel.dispose();
@@ -796,5 +846,15 @@ class NybbleWebviewViewProvider implements vscode.WebviewViewProvider {
 
     getWebview(): vscode.Webview | undefined {
         return this._view?.webview;
+    }
+
+    reloadHtml(): void {
+        if (!this._view) { return; }
+        this._view.webview.html = getHtmlForWebview(this._view.webview, this._context.extensionUri);
+        setTimeout(() => {
+            broadcastState();
+            postToWebview({ type: 'inventoryUpdate', inventory });
+            postToWebview({ type: 'habitatUpdate', habitat });
+        }, 500);
     }
 }
