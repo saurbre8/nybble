@@ -2,10 +2,9 @@
  * Inventory — item definitions and resource management.
  *
  * Resources are earned through coding activity:
- *   Save a file        → Food
- *   Write lines        → XP, occasionally Coins
- *   Fix errors         → Treats
- *   Long sessions      → Habitat Items (milestone drops)
+ *   Write lines (per 50)  → Food + XP
+ *   Fix errors            → Treats
+ *   LOC milestones        → Habitat Items (milestone drops)
  */
 
 // ---------------------------------------------------------------------------
@@ -36,7 +35,7 @@ export const ITEMS: Record<string, ItemDefinition> = {
     basic_food: {
         id: 'basic_food',
         name: 'Kibble',
-        description: 'Standard critter food. Earned from saving files.',
+        description: 'Standard critter food. Earned by writing code.',
         category: 'food',
         hungerRestore: 20,
         happinessRestore: 0,
@@ -211,21 +210,9 @@ export interface CodingReward {
     reason: string;
 }
 
-/** Called whenever the user saves a file. */
-export function rewardForSave(): CodingReward {
-    return { itemId: 'basic_food', quantity: 1, reason: 'You saved a file' };
-}
-
-/** Called when a batch of new lines have been written. */
-export function rewardForLines(lineCount: number): CodingReward | null {
-    // Every 50 lines earns a snack; every 200 lines earns a treat
-    if (lineCount >= 200) {
-        return { itemId: 'treat', quantity: 1, reason: `Wrote ${lineCount} lines` };
-    }
-    if (lineCount >= 50) {
-        return { itemId: 'snack', quantity: 1, reason: `Wrote ${lineCount} lines` };
-    }
-    return null;
+/** Called when a batch of new lines have been written (every 50-line chunk). */
+export function rewardForLines(): CodingReward {
+    return { itemId: 'basic_food', quantity: 1, reason: 'Wrote 50 lines' };
 }
 
 /** Called when diagnostics (errors/warnings) in a file drop to zero. */
@@ -233,13 +220,22 @@ export function rewardForFixingErrors(): CodingReward {
     return { itemId: 'treat', quantity: 1, reason: 'Fixed all errors in a file' };
 }
 
-/** Milestone drops for long sessions (pass total saves in session). */
-export function milestoneReward(totalSaves: number): CodingReward | null {
-    // At 10, 50, 100 saves — drop furniture or mega meal
-    if (totalSaves === 10)  { return { itemId: 'snack',     quantity: 3,  reason: '10 saves milestone' }; }
-    if (totalSaves === 50)  { return { itemId: 'mega_meal', quantity: 1,  reason: '50 saves milestone' }; }
-    if (totalSaves === 100) { return { itemId: 'plant',     quantity: 1,  reason: '100 saves milestone' }; }
-    if (totalSaves === 200) { return { itemId: 'toy_box',   quantity: 1,  reason: '200 saves milestone' }; }
-    if (totalSaves === 500) { return { itemId: 'bed',       quantity: 1,  reason: '500 saves milestone' }; }
+/**
+ * Milestone drops based on total lines of code written (cumulative session total).
+ * Pass the current total — rewards trigger when crossing a threshold in the last 50-line chunk.
+ */
+export function milestoneReward(totalLoc: number): CodingReward | null {
+    const milestones: Array<{ at: number; itemId: string; quantity: number; label: string }> = [
+        { at: 500,   itemId: 'snack',     quantity: 3, label: '500 lines' },
+        { at: 2000,  itemId: 'mega_meal', quantity: 1, label: '2,000 lines' },
+        { at: 5000,  itemId: 'plant',     quantity: 1, label: '5,000 lines' },
+        { at: 10000, itemId: 'toy_box',   quantity: 1, label: '10,000 lines' },
+        { at: 25000, itemId: 'bed',       quantity: 1, label: '25,000 lines' },
+    ];
+    for (const m of milestones) {
+        if (totalLoc >= m.at && totalLoc - 50 < m.at) {
+            return { itemId: m.itemId, quantity: m.quantity, reason: `${m.label} milestone` };
+        }
+    }
     return null;
 }
